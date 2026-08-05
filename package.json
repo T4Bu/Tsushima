@@ -1,0 +1,20 @@
+{
+  "name": "crimson-wind-basin",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A procedural, walkable cinematic Japanese sunset biome.",
+  "scripts": {
+    "dev": "node node_modules/vite/bin/vite.js --host 127.0.0.1",
+    "build": "node node_modules/vite/bin/vite.js build",
+    "preview": "node node_modules/vite/bin/vite.js preview --host 127.0.0.1",
+    "capture": "node scripts/capture.mjs"
+  },
+  "dependencies": {
+    "three": "0.167.1"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1",
+    "vite": "6.4.1"
+  }
+}

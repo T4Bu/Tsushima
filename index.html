@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#2d1b18" />
+    <meta name="description" content="Crimson Wind Basin — a procedural walkable sunset biome." />
+    <title>Crimson Wind Basin</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="grade" aria-hidden="true"></div>
+    <div id="grain" aria-hidden="true"></div>
+
+    <section id="welcome" class="welcome" aria-label="Enter the biome">
+      <div class="eyebrow">A procedural landscape study</div>
+      <h1>Crimson<br /><em>Wind</em> Basin</h1>
+      <p>Follow the wind from the bamboo ridge to the ancient tree.</p>
+      <button id="enter" type="button"><span>Enter the basin</span><i></i></button>
+      <div class="welcome-controls">WASD move · Mouse look · Shift sprint · P photo mode</div>
+    </section>
+
+    <aside id="hud" class="hud is-hidden">
+      <div class="location">
+        <span id="location-kicker">Tsutsu Bamboo Ridge</span>
+        <strong id="location-name">Crimson Wind Basin</strong>
+      </div>
+      <div class="wind-readout" aria-label="Wind direction">
+        <svg viewBox="0 0 46 46" aria-hidden="true">
+          <circle cx="23" cy="23" r="19"></circle>
+          <path id="wind-arrow" d="M23 34V12m0 0-6 8m6-8 6 8"></path>
+        </svg>
+        <span>Guiding wind</span>
+      </div>
+    </aside>
+
+    <div id="reticle" class="reticle is-hidden" aria-hidden="true"></div>
+    <div id="hint" class="hint is-hidden">Click to return to the basin</div>
+    <div id="loading" class="loading"><span></span><p>Growing the basin</p></div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
