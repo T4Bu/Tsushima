@@ -9,8 +9,10 @@ import {
   Mesh,
   NormalBlending,
   Points,
+  SRGBColorSpace,
   ShaderMaterial,
   Sphere,
+  TextureLoader,
   Vector2,
   Vector3,
 } from 'three';
@@ -150,6 +152,24 @@ function appendQuad(
   appendVertex(buffers, p00, normal, [0, flex0], flex0, part);
   appendVertex(buffers, p11, normal, [1, flex1], flex1, part);
   appendVertex(buffers, p01, normal, [0, flex1], flex1, part);
+}
+
+function appendTexturedQuad(
+  buffers,
+  p00,
+  p10,
+  p11,
+  p01,
+  normal,
+  flex0,
+  flex1,
+) {
+  appendVertex(buffers, p00, normal, [0, 0], flex0);
+  appendVertex(buffers, p10, normal, [1, 0], flex1);
+  appendVertex(buffers, p11, normal, [1, 1], flex1);
+  appendVertex(buffers, p00, normal, [0, 0], flex0);
+  appendVertex(buffers, p11, normal, [1, 1], flex1);
+  appendVertex(buffers, p01, normal, [0, 1], flex0);
 }
 
 function appendTriangle(buffers, a, b, c, flex, part = 0) {
@@ -331,35 +351,73 @@ function makeFlowerClumpGeometry() {
   return finishGeometry(buffers);
 }
 
-function makeBambooStalkGeometry() {
+const BAMBOO_ARCHETYPES = [
+  { nodeCount: 7, leanX: 1.02, leanZ: -.46, curveX: .5, curveZ: .36, phase: .35 },
+  { nodeCount: 8, leanX: -.58, leanZ: .92, curveX: .62, curveZ: .42, phase: 1.7 },
+  { nodeCount: 6, leanX: 1.18, leanZ: .5, curveX: .42, curveZ: .58, phase: 3.15 },
+];
+
+function bambooAxisAt(archetype, t) {
+  const config = BAMBOO_ARCHETYPES[archetype % BAMBOO_ARCHETYPES.length];
+  const eased = t * t * (3 - 2 * t);
+  const primary = Math.sin(t * Math.PI * 1.18 + config.phase) - Math.sin(config.phase);
+  const secondary = Math.sin(t * Math.PI * 1.83 + config.phase * .61)
+    - Math.sin(config.phase * .61);
+  return [
+    config.leanX * eased + primary * config.curveX * t,
+    config.leanZ * eased + secondary * config.curveZ * t,
+  ];
+}
+
+function makeBambooStalkGeometry(archetype = 0) {
   const buffers = makeBuffers();
-  const radialSegments = 6;
-  const heightSegments = 24;
+  const config = BAMBOO_ARCHETYPES[archetype % BAMBOO_ARCHETYPES.length];
+  const radialSegments = 8;
+  const heightSegments = 18;
+  const baseRadius = .076 + archetype * .003;
+
   for (let ySegment = 0; ySegment < heightSegments; ySegment += 1) {
     const t0 = ySegment / heightSegments;
     const t1 = (ySegment + 1) / heightSegments;
-    const node0 = Math.pow(Math.abs(Math.cos(t0 * 7 * Math.PI)), 18) * 0.15;
-    const node1 = Math.pow(Math.abs(Math.cos(t1 * 7 * Math.PI)), 18) * 0.15;
-    const r0 = 0.086 * (1 - 0.17 * t0) * (1 + node0);
-    const r1 = 0.086 * (1 - 0.17 * t1) * (1 + node1);
-    const lean0 = 0.07 * t0 * t0;
-    const lean1 = 0.07 * t1 * t1;
+    const center0 = bambooAxisAt(archetype, t0);
+    const center1 = bambooAxisAt(archetype, t1);
+    const r0 = baseRadius * (1 - .23 * t0);
+    const r1 = baseRadius * (1 - .23 * t1);
     for (let radial = 0; radial < radialSegments; radial += 1) {
       const a0 = (radial / radialSegments) * TAU;
       const a1 = ((radial + 1) / radialSegments) * TAU;
-      const n0 = [Math.cos(a0), 0.08, Math.sin(a0)];
-      const n1 = [Math.cos(a1), 0.08, Math.sin(a1)];
       appendQuad(
         buffers,
-        [Math.cos(a0) * r0 + lean0, t0, Math.sin(a0) * r0],
-        [Math.cos(a1) * r0 + lean0, t0, Math.sin(a1) * r0],
-        [Math.cos(a1) * r1 + lean1, t1, Math.sin(a1) * r1],
-        [Math.cos(a0) * r1 + lean1, t1, Math.sin(a0) * r1],
-        [
-          (n0[0] + n1[0]) * 0.5,
-          (n0[1] + n1[1]) * 0.5,
-          (n0[2] + n1[2]) * 0.5,
-        ],
+        [center0[0] + Math.cos(a0) * r0, t0, center0[1] + Math.sin(a0) * r0],
+        [center0[0] + Math.cos(a1) * r0, t0, center0[1] + Math.sin(a1) * r0],
+        [center1[0] + Math.cos(a1) * r1, t1, center1[1] + Math.sin(a1) * r1],
+        [center1[0] + Math.cos(a0) * r1, t1, center1[1] + Math.sin(a0) * r1],
+        [Math.cos((a0 + a1) * .5), .055, Math.sin((a0 + a1) * .5)],
+        t0,
+        t1,
+      );
+    }
+  }
+
+  // Separate collars make the segmented culm readable at walking distance;
+  // they replace the old identical sine-wave bulges with true node rings.
+  for (let node = 1; node < config.nodeCount; node += 1) {
+    const t = node / config.nodeCount + Math.sin(node * 2.17 + config.phase) * .004;
+    const t0 = t - .0024;
+    const t1 = t + .0024;
+    const center0 = bambooAxisAt(archetype, t0);
+    const center1 = bambooAxisAt(archetype, t1);
+    const collarRadius = baseRadius * (1 - .23 * t) * 1.24;
+    for (let radial = 0; radial < radialSegments; radial += 1) {
+      const a0 = (radial / radialSegments) * TAU;
+      const a1 = ((radial + 1) / radialSegments) * TAU;
+      appendQuad(
+        buffers,
+        [center0[0] + Math.cos(a0) * collarRadius, t0, center0[1] + Math.sin(a0) * collarRadius],
+        [center0[0] + Math.cos(a1) * collarRadius, t0, center0[1] + Math.sin(a1) * collarRadius],
+        [center1[0] + Math.cos(a1) * collarRadius, t1, center1[1] + Math.sin(a1) * collarRadius],
+        [center1[0] + Math.cos(a0) * collarRadius, t1, center1[1] + Math.sin(a0) * collarRadius],
+        [Math.cos((a0 + a1) * .5), .08, Math.sin((a0 + a1) * .5)],
         t0,
         t1,
       );
@@ -368,69 +426,109 @@ function makeBambooStalkGeometry() {
   return finishGeometry(buffers);
 }
 
-function makeBambooLeafGeometry() {
+function appendBambooFrondCard(
+  buffers,
+  root,
+  angle,
+  reach,
+  verticalHalfHeight,
+  lateralHalfWidth,
+  droop,
+  flex,
+  rolled,
+) {
+  const dirX = Math.cos(angle);
+  const dirZ = Math.sin(angle);
+  const sideX = -dirZ;
+  const sideZ = dirX;
+  const end = [
+    root[0] + dirX * reach,
+    root[1] - droop,
+    root[2] + dirZ * reach,
+  ];
+  const widthVector = rolled
+    ? [sideX * lateralHalfWidth, verticalHalfHeight * .32, sideZ * lateralHalfWidth]
+    : [sideX * lateralHalfWidth * .12, verticalHalfHeight, sideZ * lateralHalfWidth * .12];
+  const tangent = [dirX * reach, -droop, dirZ * reach];
+  let normal = [
+    tangent[1] * widthVector[2] - tangent[2] * widthVector[1],
+    tangent[2] * widthVector[0] - tangent[0] * widthVector[2],
+    tangent[0] * widthVector[1] - tangent[1] * widthVector[0],
+  ];
+  const normalLength = Math.hypot(normal[0], normal[1], normal[2]) || 1;
+  normal = normal.map((component) => component / normalLength);
+  appendTexturedQuad(
+    buffers,
+    [root[0] - widthVector[0], root[1] - widthVector[1], root[2] - widthVector[2]],
+    [end[0] - widthVector[0], end[1] - widthVector[1], end[2] - widthVector[2]],
+    [end[0] + widthVector[0], end[1] + widthVector[1], end[2] + widthVector[2]],
+    [root[0] + widthVector[0], root[1] + widthVector[1], root[2] + widthVector[2]],
+    normal,
+    flex,
+    Math.min(1, flex + .18),
+  );
+}
+
+function makeBambooLeafGeometry(archetype = 0) {
   const buffers = makeBuffers();
-  const whorlCount = 11;
-  for (let whorl = 0; whorl < whorlCount; whorl += 1) {
-    const level = whorl / (whorlCount - 1);
-    const y = 0.53 + level * 0.46;
-    const angle = whorl * 2.17 + Math.sin(whorl * 1.37) * 0.28;
-    const dirX = Math.cos(angle);
-    const dirZ = Math.sin(angle);
-    const sideX = -dirZ;
-    const sideZ = dirX;
-    const reach = 0.52 + Math.sin((level * 0.82 + 0.1) * Math.PI) * 0.45;
-    const flex = 0.54 + level * 0.46;
+  const variants = [
+    { tiers: 7, baseY: .38, topY: .975, reach: 1.82, phase: .2 },
+    { tiers: 6, baseY: .44, topY: .99, reach: 2.02, phase: 1.45 },
+    { tiers: 8, baseY: .34, topY: .955, reach: 1.66, phase: 2.8 },
+  ];
+  const config = variants[archetype % variants.length];
 
-    // Thin branchlets visually bind each spray into a canopy mass.
-    const branchWidth = 0.011;
-    appendQuad(
-      buffers,
-      [-sideX * branchWidth, y - 0.012, -sideZ * branchWidth],
-      [sideX * branchWidth, y + 0.012, sideZ * branchWidth],
-      [dirX * reach + sideX * branchWidth * 0.35, y + 0.025, dirZ * reach + sideZ * branchWidth * 0.35],
-      [dirX * reach - sideX * branchWidth * 0.35, y + 0.005, dirZ * reach - sideZ * branchWidth * 0.35],
-      [sideX, 0.12, sideZ],
-      flex,
-      Math.min(1, flex + 0.14),
-    );
+  for (let tier = 0; tier < config.tiers; tier += 1) {
+    const level = tier / Math.max(1, config.tiers - 1);
+    const y = config.baseY
+      + level * (config.topY - config.baseY)
+      + Math.sin(tier * 2.31 + config.phase) * .006;
+    const axis = bambooAxisAt(archetype, y);
+    const sprayCount = 1
+      + (((tier + archetype) % 3 === 0) ? 1 : 0)
+      + (tier === config.tiers - 1 ? 1 : 0);
 
-    const leafCount = whorl === whorlCount - 1 ? 9 : 7;
-    for (let leaf = 0; leaf < leafCount; leaf += 1) {
-      const along = 0.2 + (leaf / Math.max(1, leafCount - 1)) * 0.76;
-      const fan = (leaf - (leafCount - 1) * 0.5) * 0.19;
-      const leafAngle = angle + fan + Math.sin(leaf * 2.9 + whorl) * 0.06;
-      const leafDirX = Math.cos(leafAngle);
-      const leafDirZ = Math.sin(leafAngle);
-      const leafSideX = -leafDirZ;
-      const leafSideZ = leafDirX;
-      const centerX = dirX * reach * along + sideX * fan * 0.16;
-      const centerZ = dirZ * reach * along + sideZ * fan * 0.16;
-      const centerY = y + Math.sin(leaf * 1.73 + whorl) * 0.018 + along * 0.018;
-      const halfLength = 0.09 + ((leaf + whorl) % 4) * 0.012;
-      const halfWidth = 0.018 + ((leaf * 3 + whorl) % 3) * 0.004;
+    for (let spray = 0; spray < sprayCount; spray += 1) {
+      const angle = tier * 2.399963
+        + spray * (TAU / sprayCount)
+        + config.phase
+        + Math.sin(tier * 1.71 + spray * 2.23) * .19;
+      const dirX = Math.cos(angle);
+      const dirZ = Math.sin(angle);
+      const reach = config.reach
+        * (.78 + .16 * Math.sin(tier * 2.07 + spray * 1.31))
+        * (1.04 - level * .22);
+      const flex = .54 + level * .38;
       const root = [
-        centerX - leafDirX * halfLength,
-        centerY - 0.008,
-        centerZ - leafDirZ * halfLength,
+        axis[0] + dirX * .02,
+        y + Math.sin(tier * 1.3 + spray) * .004,
+        axis[1] + dirZ * .02,
       ];
-      const tip = [
-        centerX + leafDirX * halfLength,
-        centerY - 0.015,
-        centerZ + leafDirZ * halfLength,
-      ];
-      const left = [
-        centerX + leafSideX * halfWidth,
-        centerY + 0.006,
-        centerZ + leafSideZ * halfWidth,
-      ];
-      const right = [
-        centerX - leafSideX * halfWidth,
-        centerY - 0.006,
-        centerZ - leafSideZ * halfWidth,
-      ];
-      appendTriangle(buffers, root, right, tip, Math.min(1, flex + along * 0.18));
-      appendTriangle(buffers, root, tip, left, Math.min(1, flex + along * 0.18));
+      const halfHeight = .052 + .009 * ((tier + archetype) % 3);
+      const halfWidth = .13 + .018 * ((tier + spray + archetype) % 3);
+      const droop = .012 + .004 * ((tier + spray) % 3);
+      appendBambooFrondCard(
+        buffers,
+        root,
+        angle,
+        reach,
+        halfHeight,
+        halfWidth,
+        droop,
+        flex,
+        false,
+      );
+      appendBambooFrondCard(
+        buffers,
+        root,
+        angle + .035,
+        reach * .96,
+        halfHeight * .92,
+        halfWidth * 1.08,
+        droop * 1.18,
+        Math.min(1, flex + .025),
+        true,
+      );
     }
   }
   return finishGeometry(buffers);
@@ -704,6 +802,7 @@ const INSTANCED_VERTEX_SHADER = /* glsl */`
   varying float vTint;
   varying float vVariation;
   varying float vFogDistance;
+  varying vec2 vLeafUv;
   varying vec3 vWorldPosition;
   varying vec3 vWorldNormal;
   varying vec3 vViewDirection;
@@ -746,6 +845,7 @@ const INSTANCED_VERTEX_SHADER = /* glsl */`
     vFlex = flex;
     vTint = aTint;
     vVariation = fract(sin(dot(normal.xz, vec2(12.9898, 78.233)) + aPhase * 3.17) * 43758.5453);
+    vLeafUv = uv;
 
     vec4 transformedWorld = modelMatrix * vec4(worldPosition, 1.0);
     vWorldPosition = transformedWorld.xyz;
@@ -816,6 +916,71 @@ const FOLIAGE_FRAGMENT_SHADER = /* glsl */`
     float transmission = (backLight * 0.3 + rim * 0.045)
       * uTransmissionStrength * (0.22 + 0.78 * smoothstep(0.08, 0.9, vFlex));
     color += uSunColor * transmission;
+
+    float fogAmount = 1.0 - exp(-uFogDensity * uFogDensity * vFogDistance * vFogDistance);
+    vec3 warmFog = uFogColor * mix(0.94, 1.075, smoothstep(-2.0, 16.0, vWorldPosition.y));
+    color = mix(color, warmFog, min(fogAmount, 0.96));
+    gl_FragColor = vec4(color, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+  }
+`;
+
+const BAMBOO_FRAGMENT_SHADER = /* glsl */`
+  precision highp float;
+  uniform sampler2D uLeafMap;
+  uniform vec3 uBaseColor;
+  uniform vec3 uLitColor;
+  uniform vec3 uTipColor;
+  uniform vec3 uFogColor;
+  uniform vec3 uSunDirection;
+  uniform vec3 uSunColor;
+  uniform float uFogDensity;
+  uniform float uFadeStart;
+  uniform float uFadeEnd;
+  uniform float uTransmissionStrength;
+
+  varying float vFlex;
+  varying float vTint;
+  varying float vVariation;
+  varying float vFogDistance;
+  varying vec2 vLeafUv;
+  varying vec3 vWorldPosition;
+  varying vec3 vWorldNormal;
+  varying vec3 vViewDirection;
+
+  float ditherNoise(vec2 coordinate) {
+    return fract(52.9829189 * fract(dot(coordinate, vec2(0.06711056, 0.00583715))));
+  }
+
+  void main() {
+    vec4 leaf = texture2D(uLeafMap, vLeafUv);
+    float pixelNoise = ditherNoise(gl_FragCoord.xy + vLeafUv * 47.0);
+    if (leaf.a < 0.34 + pixelNoise * 0.16) discard;
+
+    float fade = 1.0 - smoothstep(uFadeStart, uFadeEnd, vFogDistance);
+    if (fade < ditherNoise(gl_FragCoord.yx + 19.0)) discard;
+
+    vec3 normal = normalize(vWorldNormal);
+    if (!gl_FrontFacing) normal = -normal;
+    vec3 lightDirection = normalize(uSunDirection);
+    vec3 viewDirection = normalize(vViewDirection);
+    float facing = dot(normal, lightDirection);
+    float frontLight = max(facing, 0.0);
+    float wrappedLight = clamp((facing + 0.46) / 1.46, 0.0, 1.0);
+    float backLight = pow(max(dot(-normal, lightDirection), 0.0), 1.25);
+    float rim = pow(1.0 - abs(dot(normal, viewDirection)), 1.8);
+
+    float pigmentMix = clamp(
+      0.34 + wrappedLight * 0.46 + (vTint - 0.5) * 0.18 + (vVariation - 0.5) * 0.1,
+      0.0,
+      1.0
+    );
+    vec3 paletteColor = mix(uBaseColor, uLitColor, pigmentMix);
+    vec3 color = mix(paletteColor, leaf.rgb, 0.74);
+    color *= 0.49 + wrappedLight * 0.48 + frontLight * 0.12;
+    color = mix(color, uTipColor, smoothstep(0.76, 1.0, vFlex) * 0.075);
+    color += uSunColor * (backLight * 0.27 + rim * 0.055) * uTransmissionStrength;
 
     float fogAmount = 1.0 - exp(-uFogDensity * uFogDensity * vFogDistance * vFogDistance);
     vec3 warmFog = uFogColor * mix(0.94, 1.075, smoothstep(-2.0, 16.0, vWorldPosition.y));
@@ -984,6 +1149,32 @@ function foliageMaterial(common, colors, options = {}) {
   });
 }
 
+function makeBambooCrownMaterial(common, colors, leafMap, options = {}) {
+  return new ShaderMaterial({
+    name: options.name ?? 'Bamboo leaf sprays',
+    uniforms: {
+      ...common,
+      uLeafMap: { value: leafMap },
+      uBaseColor: { value: colors.base },
+      uLitColor: { value: colors.lit },
+      uTipColor: { value: colors.tip },
+      uBendScale: { value: options.bendScale ?? 0.021 },
+      uPlayerBend: { value: options.playerBend ?? 0.02 },
+      uHardDistance: { value: options.hardDistance ?? 190 },
+      uShapeVariation: { value: options.shapeVariation ?? 0.18 },
+      uFadeStart: { value: options.fadeStart ?? 150 },
+      uFadeEnd: { value: options.fadeEnd ?? 188 },
+      uTransmissionStrength: { value: options.transmissionStrength ?? 0.62 },
+    },
+    vertexShader: INSTANCED_VERTEX_SHADER,
+    fragmentShader: BAMBOO_FRAGMENT_SHADER,
+    side: DoubleSide,
+    depthWrite: true,
+    transparent: false,
+    toneMapped: true,
+  });
+}
+
 function makeFlowerMaterial(common, palette) {
   return new ShaderMaterial({
     name: 'Crimson spider lilies',
@@ -1137,7 +1328,8 @@ function addLayer(root, name, baseGeometry, data, material, boundingRadius = 180
 
 /**
  * Builds the biome's animated vegetation as a small number of instanced draw calls.
- * All placement and motion are deterministic, and no texture assets are required.
+ * Placement and motion are deterministic. The bamboo crown uses one original
+ * alpha-cutout frond so its dense silhouette survives at walking distance.
  */
 export function createVegetation(scene, {
   heightAt,
@@ -1156,6 +1348,9 @@ export function createVegetation(scene, {
   const density = qualityScale(quality);
   const random = mulberry32(SEED);
   const common = sharedUniforms(windUniforms, palette);
+  const bambooFrondTexture = new TextureLoader().load('/assets/vegetation/bamboo-frond.png');
+  bambooFrondTexture.colorSpace = SRGBColorSpace;
+  bambooFrondTexture.anisotropy = 4;
 
   const safeHeight = (x, z) => {
     const value = heightAt?.(x, z);
@@ -1191,7 +1386,7 @@ export function createVegetation(scene, {
   const grassTarget = Math.round(22500 * density);
   const reedTarget = Math.round(1900 * density);
   const flowerTarget = Math.round(11200 * density);
-  const bambooTarget = Math.round(780 * Math.sqrt(density));
+  const bambooTarget = Math.round(520 * Math.sqrt(density));
   const treeTarget = Math.round(54 * Math.sqrt(density));
   const particleTarget = Math.round(820 * Math.sqrt(density));
 
@@ -1279,26 +1474,48 @@ export function createVegetation(scene, {
     };
   }, 48);
 
-  const bambooData = buildInstanceData(bambooTarget, random, (rng) => {
-    const z = 57 + rng() * 52;
+  // Culms grow from shared clump centers rather than an even wall. Gaps between
+  // those clumps let individual compound curves and crowns read from the path.
+  const bambooRandom = mulberry32(SEED + 0x1703);
+  const bambooClusters = [];
+  for (let attempt = 0; attempt < 900 && bambooClusters.length < 94; attempt += 1) {
+    const z = 57 + bambooRandom() * 52;
     const centerX = pathX?.(z) ?? 0;
-    const side = rng() < 0.5 ? -1 : 1;
-    const lateral = side * (4.3 + Math.pow(rng(), 0.78) * 47);
-    const x = centerX + lateral + (rng() - 0.5) * 4.5;
-    if (Math.abs(x) > 108 || pathDistance(x, z) < 3.65) return null;
-    const groveNoise = fbm(x * 0.058, z * 0.058, SEED + 1703);
-    if (rng() > 0.5 + groveNoise * 0.48) return null;
+    const side = bambooRandom() < .5 ? -1 : 1;
+    const lateral = side * (5.2 + Math.pow(bambooRandom(), .7) * 45);
+    const x = centerX + lateral + (bambooRandom() - .5) * 3.2;
+    if (Math.abs(x) > 104 || pathDistance(x, z) < 4.65) continue;
+    const groveNoise = fbm(x * .052, z * .052, SEED + 1703);
+    if (bambooRandom() > .42 + groveNoise * .52) continue;
+    bambooClusters.push({
+      x,
+      z,
+      radius: 1.15 + bambooRandom() * 2.35,
+      height: .88 + bambooRandom() * .2,
+      tint: clamp(.14 + groveNoise * .68, 0, 1),
+    });
+  }
+
+  const bambooData = buildInstanceData(bambooTarget, bambooRandom, (rng) => {
+    const cluster = bambooClusters[Math.floor(rng() * bambooClusters.length)];
+    const angle = rng() * TAU;
+    const radius = Math.pow(rng(), .72) * cluster.radius;
+    const x = cluster.x + Math.cos(angle) * radius;
+    const z = cluster.z + Math.sin(angle) * radius;
+    if (Math.abs(x) > 108 || z < 55 || z > 111 || pathDistance(x, z) < 3.75) return null;
+    const groveNoise = fbm(x * .058, z * .058, SEED + 1703);
+    const sapling = rng() < .28;
     return {
       x,
       y: safeHeight(x, z) - 0.025,
       z,
-      scaleX: 0.54 + rng() * 0.42,
-      scaleY: 12.2 + rng() * 7.8,
+      scaleX: sapling ? .42 + rng() * .2 : .58 + rng() * .34,
+      scaleY: (sapling ? 7.4 + rng() * 3.8 : 11.2 + rng() * 5.8) * cluster.height,
       yaw: rng() * TAU,
-      tint: 0.12 + groveNoise * 0.72,
+      tint: clamp(cluster.tint * .72 + groveNoise * .22 + rng() * .08, 0, 1),
       phase: rng(),
     };
-  }, 32);
+  }, 42);
 
   const treeData = buildInstanceData(treeTarget, random, (rng) => {
     const x = (rng() * 2 - 1) * 104;
@@ -1334,9 +1551,11 @@ export function createVegetation(scene, {
     spread: 0.095,
   });
   const flowerBase = makeFlowerClumpGeometry();
-  const bambooStalkBase = makeBambooStalkGeometry();
-  const bambooLeavesBase = makeBambooLeafGeometry();
-  const bambooCrownData = scaleInstanceWidth(bambooData, 1.08);
+  const bambooArchetypeData = [0, 1, 2].map((archetype) => (
+    selectInstanceData(bambooData, archetype, 3)
+  ));
+  const bambooStalkBases = [0, 1, 2].map((archetype) => makeBambooStalkGeometry(archetype));
+  const bambooCrownBases = [0, 1, 2].map((archetype) => makeBambooLeafGeometry(archetype));
   const treeArchetypeData = [0, 1, 2].map((archetype) => (
     selectInstanceData(treeData, archetype, 3)
   ));
@@ -1376,35 +1595,62 @@ export function createVegetation(scene, {
 
   addLayer(root, 'Crimson flower field', flowerBase, flowerData, makeFlowerMaterial(common, palette));
 
-  addLayer(root, 'Bamboo stalks', bambooStalkBase, bambooData, foliageMaterial(common, {
+  const bambooStalkMaterial = foliageMaterial(common, {
     base: paletteColor(palette, 'shadowTeal', 0x0b1b1d),
-    lit: paletteColor(palette, 'bamboo', 0x163b34),
-    tip: paletteColor(palette, 'bamboo', 0x163b34).multiplyScalar(1.1),
+    lit: paletteColor(palette, 'bamboo', 0x163b34).lerp(new Color(0x506843), .12),
+    tip: paletteColor(palette, 'bamboo', 0x163b34).lerp(new Color(0x768052), .2),
   }, {
     name: 'Bamboo stalk material',
-    bendScale: 0.012,
+    bendScale: 0.017,
     playerBend: 0.03,
-    hardDistance: 190,
-    fadeStart: 150,
-    fadeEnd: 188,
-    transmissionStrength: 0.02,
-    contactStrength: 0.28,
-  }), 195);
+    shapeVariation: .18,
+    // Let distant culms dissolve before their crowns so the ridge reads as a
+    // soft bamboo mass instead of a screen-space comb of one-pixel lines.
+    hardDistance: 164,
+    fadeStart: 108,
+    fadeEnd: 158,
+    transmissionStrength: 0.055,
+    contactStrength: 0.34,
+  });
 
-  addLayer(root, 'Bamboo crowns', bambooLeavesBase, bambooCrownData, foliageMaterial(common, {
+  const bambooCrownMaterial = makeBambooCrownMaterial(common, {
     base: paletteColor(palette, 'shadowTeal', 0x0b1b1d),
-    lit: paletteColor(palette, 'bamboo', 0x163b34),
-    tip: paletteColor(palette, 'grassShadow', 0x604d2d),
-  }, {
+    lit: paletteColor(palette, 'bamboo', 0x163b34).lerp(new Color(0x65784e), .18),
+    tip: paletteColor(palette, 'bamboo', 0x163b34)
+      .lerp(paletteColor(palette, 'sun', 0xffc86f), .22),
+  }, bambooFrondTexture, {
     name: 'Bamboo leaf material',
-    bendScale: 0.047,
+    bendScale: 0.021,
     playerBend: 0.02,
+    shapeVariation: .18,
     hardDistance: 190,
     fadeStart: 150,
     fadeEnd: 188,
-    transmissionStrength: 0.43,
-    contactStrength: 0.18,
-  }), 195);
+    transmissionStrength: 0.62,
+    contactStrength: 0.2,
+  });
+
+  let bambooDrawCalls = 0;
+  bambooArchetypeData.forEach((data, archetype) => {
+    if (data.count === 0) return;
+    addLayer(
+      root,
+      `Bamboo stalks ${archetype + 1}`,
+      bambooStalkBases[archetype],
+      data,
+      bambooStalkMaterial,
+      195,
+    );
+    addLayer(
+      root,
+      `Bamboo crowns ${archetype + 1}`,
+      bambooCrownBases[archetype],
+      data,
+      bambooCrownMaterial,
+      195,
+    );
+    bambooDrawCalls += 2;
+  });
 
   const treeTrunkMaterial = foliageMaterial(common, {
     base: paletteColor(palette, 'bark', 0x4b3d31).multiplyScalar(0.66),
@@ -1470,7 +1716,8 @@ export function createVegetation(scene, {
     bambooStalks: bambooData.count,
     broadleafTrees: treeData.count,
     windborneParticles: particleTarget,
-    drawCalls: 6 + treeDrawCalls,
+    bambooArchetypes: bambooArchetypeData.length,
+    drawCalls: 4 + bambooDrawCalls + treeDrawCalls,
   });
 
   return {

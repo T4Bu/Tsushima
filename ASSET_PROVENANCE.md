@@ -36,6 +36,14 @@ serves the texture files to clients, so publishing this project is materially
 different from sharing only rendered screenshots or video. This note records
 provenance; it is not a substitute for the governing license.
 
+## Original bamboo foliage texture
+
+`public/assets/vegetation/bamboo-frond.png` was generated specifically for this
+project from an original text prompt with OpenAI image generation, then locally
+chroma-keyed to a transparent alpha cutout. It is instanced on crossed crown
+cards; all culm geometry, crown layout, placement, shading, and wind deformation
+remain project code. It was not copied from *Ghost of Tsushima* or another game.
+
 ## Originality boundary
 
 The project uses *Ghost of Tsushima* as a high-level visual reference only. No
