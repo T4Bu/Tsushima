@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const TREE_URLS = [
   '/assets/trees/tree_0.glb',
-  '/assets/trees/tree_3.glb',
+  '/assets/trees/tree_2.glb',
 ];
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value));

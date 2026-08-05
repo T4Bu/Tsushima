@@ -9,9 +9,9 @@ repository. The runtime also uses the compact external assets listed below.
 Runtime files:
 
 - `public/assets/trees/tree_0.glb`
-- `public/assets/trees/tree_3.glb`
+- `public/assets/trees/tree_2.glb`
 - `public/assets/trees/tree-sprite-0.png`
-- `public/assets/trees/tree-sprite-3.png`
+- `public/assets/trees/tree-sprite-2.png`
 
 The repository identifies these EZ-Tree assets with the bundled
 [MIT License](./public/assets/trees/LICENSE-EZ-TREE.txt), copyright 2024 Daniel

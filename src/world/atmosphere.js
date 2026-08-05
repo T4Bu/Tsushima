@@ -99,7 +99,7 @@ function createDistantTreeLine(scene, palette) {
   const loader = new THREE.TextureLoader();
   const treeMaps = [
     loader.load('/assets/trees/tree-sprite-0.png'),
-    loader.load('/assets/trees/tree-sprite-3.png'),
+    loader.load('/assets/trees/tree-sprite-2.png'),
   ];
   for (const map of treeMaps) {
     map.colorSpace = THREE.SRGBColorSpace;
