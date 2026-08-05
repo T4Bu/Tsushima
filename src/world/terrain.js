@@ -5,6 +5,7 @@ const TERRAIN_HALF = TERRAIN_SIZE * 0.5;
 const TERRAIN_SEGMENTS = 176;
 const PATH_START_Z = TERRAIN_HALF - 1;
 const PATH_END_Z = -TERRAIN_HALF + 1;
+const MATERIAL_ASSET_ROOT = `${import.meta.env.BASE_URL}assets/materials/`;
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -147,30 +148,48 @@ function paletteColor(palette, key, fallback) {
   return value && value.isColor ? value.clone() : new THREE.Color(value);
 }
 
-function createNoiseTexture(seed, { size = 128, contrast = 54, base = 205 } = {}) {
-  const data = new Uint8Array(size * size * 4);
-  for (let z = 0; z < size; z += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const broad = hash2(Math.floor(x / 5) + seed, Math.floor(z / 5) - seed);
-      const fine = hash2(x + seed * 17, z - seed * 29);
-      const fleck = fine > .965 ? -.36 : fine < .025 ? .18 : 0;
-      const value = Math.round(Math.min(255, Math.max(72, base + (broad - .5) * contrast + fleck * 255)));
-      const index = (z * size + x) * 4;
-      data[index] = value;
-      data[index + 1] = value;
-      data[index + 2] = value;
-      data[index + 3] = 255;
-    }
-  }
-  const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+function loadSurfaceMap(loader, setName, mapName, repeatX, repeatY, color = false) {
+  const texture = loader.load(`${MATERIAL_ASSET_ROOT}${setName}_${mapName}.webp`);
+  texture.name = `${setName} ${mapName}`;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(46, 46);
-  texture.magFilter = THREE.LinearFilter;
-  texture.minFilter = THREE.LinearMipmapLinearFilter;
-  texture.generateMipmaps = true;
-  texture.needsUpdate = true;
+  texture.repeat.set(repeatX, repeatY);
+  texture.anisotropy = 4;
+  if (color) texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
+}
+
+function loadTerrainSurfaceMaps() {
+  const loader = new THREE.TextureLoader();
+  const loadSet = (name, repeatX, repeatY) => ({
+    albedo: loadSurfaceMap(loader, name, 'albedo', repeatX, repeatY, true),
+    normal: loadSurfaceMap(loader, name, 'normal', repeatX, repeatY),
+    orm: loadSurfaceMap(loader, name, 'orm', repeatX, repeatY),
+  });
+
+  return {
+    ground: loadSet('forest', 70, 70),
+    path: loadSet('path', 1.35, 3),
+    bank: loadSet('bank', 1, 1),
+  };
+}
+
+function disposeTerrainSurfaceMaps(surfaceMaps) {
+  for (const set of Object.values(surfaceMaps)) {
+    set.albedo.dispose();
+    set.normal.dispose();
+    set.orm.dispose();
+  }
+}
+
+function applyRoughnessFloor(material, floor, cacheKey) {
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <roughnessmap_fragment>',
+      `#include <roughnessmap_fragment>\nroughnessFactor = max(roughnessFactor, ${floor.toFixed(3)});`,
+    );
+  };
+  material.customProgramCacheKey = () => cacheKey;
 }
 
 function groundColorAt(x, z, palette, target) {
@@ -191,7 +210,7 @@ function groundColorAt(x, z, palette, target) {
   target.copy(grassShadow).lerp(grassLit, lightMix);
 
   const entry = smoothstep(62, 105, z);
-  target.lerp(bamboo, entry * (0.2 + block * 0.16));
+  target.lerp(bamboo, entry * (0.46 + block * 0.16));
 
   const pathBank = 1 - smoothstep(3.5, 8.5, distanceToPath(x, z));
   target.lerp(soil, pathBank * 0.28);
@@ -207,7 +226,7 @@ function groundColorAt(x, z, palette, target) {
   return target;
 }
 
-function createTerrainMesh(palette) {
+function createTerrainMesh(palette, surfaceMaps) {
   const geometry = new THREE.PlaneGeometry(
     TERRAIN_SIZE,
     TERRAIN_SIZE,
@@ -219,12 +238,17 @@ function createTerrainMesh(palette) {
   const position = geometry.attributes.position;
   const colors = new Float32Array(position.count * 3);
   const color = new THREE.Color();
+  const neutralTint = new THREE.Color(0xffffff);
 
   for (let i = 0; i < position.count; i += 1) {
     const x = position.getX(i);
     const z = position.getZ(i);
     position.setY(i, heightAt(x, z));
     groundColorAt(x, z, palette, color);
+    // The scanned albedo supplies the fine color detail; vertex color now acts
+    // as a broad biome tint instead of multiplying it down to near-black.
+    const entryShade = smoothstep(58, 104, z);
+    color.lerp(neutralTint, 0.68 - entryShade * 0.27);
     colors[i * 3] = color.r;
     colors[i * 3 + 1] = color.g;
     colors[i * 3 + 2] = color.b;
@@ -235,16 +259,19 @@ function createTerrainMesh(palette) {
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
 
-  const detailTexture = createNoiseTexture(19, { contrast: 58, base: 218 });
   const material = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     vertexColors: true,
-    map: detailTexture,
-    bumpMap: detailTexture,
-    bumpScale: .055,
-    roughness: 0.96,
+    map: surfaceMaps.albedo,
+    normalMap: surfaceMaps.normal,
+    normalScale: new THREE.Vector2(.34, .34),
+    aoMap: surfaceMaps.orm,
+    aoMapIntensity: .72,
+    roughnessMap: surfaceMaps.orm,
+    roughness: 0.95,
     metalness: 0,
   });
+  applyRoughnessFloor(material, .82, 'biome-dry-ground-roughness-v1');
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = 'Sunset basin ground';
   mesh.receiveShadow = true;
@@ -252,7 +279,7 @@ function createTerrainMesh(palette) {
   return mesh;
 }
 
-function createPathMesh(palette) {
+function createPathMesh(palette, surfaceMaps) {
   const rows = 260;
   const columns = 5;
   const positions = new Float32Array(rows * columns * 3);
@@ -261,7 +288,9 @@ function createPathMesh(palette) {
   const indices = [];
   const pathColor = paletteColor(palette, 'path', 0x78583a);
   const soilColor = paletteColor(palette, 'soil', 0x443327);
+  const bambooColor = paletteColor(palette, 'bamboo', 0x163b34);
   const color = new THREE.Color();
+  const neutralTint = new THREE.Color(0xffffff);
 
   for (let row = 0; row < rows; row += 1) {
     const along = row / (rows - 1);
@@ -271,7 +300,9 @@ function createPathMesh(palette) {
     const normalLength = Math.sqrt(1 + derivative * derivative);
     const normalX = 1 / normalLength;
     const normalZ = -derivative / normalLength;
-    const halfWidth = 2.15 + 0.28 * Math.sin(z * 0.067 + 0.8);
+    // Keep the route broad enough for comfortable traversal, but let the
+    // meadow press into its edges instead of reading as a cleared road.
+    const halfWidth = 1.78 + 0.22 * Math.sin(z * 0.067 + 0.8);
 
     for (let column = 0; column < columns; column += 1) {
       const across01 = column / (columns - 1);
@@ -288,6 +319,9 @@ function createPathMesh(palette) {
       const fleck = hash2(row, column + 701);
       color.copy(soilColor).lerp(pathColor, 0.52 + centerWeight * 0.34);
       color.offsetHSL(0, 0, (fleck - 0.5) * 0.055);
+      const entryShade = smoothstep(58, 104, vertexZ);
+      color.lerp(bambooColor, entryShade * 0.4);
+      color.lerp(neutralTint, 0.58 - entryShade * 0.22);
       colors[offset] = color.r;
       colors[offset + 1] = color.g;
       colors[offset + 2] = color.b;
@@ -316,20 +350,22 @@ function createPathMesh(palette) {
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
 
-  const pathTexture = createNoiseTexture(53, { contrast: 72, base: 218 });
-  pathTexture.repeat.set(8, 70);
   const material = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     vertexColors: true,
-    map: pathTexture,
-    bumpMap: pathTexture,
-    bumpScale: .085,
-    roughness: 1,
+    map: surfaceMaps.albedo,
+    normalMap: surfaceMaps.normal,
+    normalScale: new THREE.Vector2(.55, .55),
+    aoMap: surfaceMaps.orm,
+    aoMapIntensity: .85,
+    roughnessMap: surfaceMaps.orm,
+    roughness: .94,
     metalness: 0,
     polygonOffset: true,
     polygonOffsetFactor: -1,
     polygonOffsetUnits: -1,
   });
+  applyRoughnessFloor(material, .78, 'biome-dry-path-roughness-v1');
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = 'Winding dirt path';
   mesh.receiveShadow = true;
@@ -354,10 +390,11 @@ function createPathLitter(palette) {
   const scale = new THREE.Vector3();
   const color = new THREE.Color();
 
-  const stoneCount = 520;
-  const stoneGeometry = new THREE.IcosahedronGeometry(.085, 0);
+  const stoneCount = 360;
+  const stoneGeometry = new THREE.IcosahedronGeometry(.072, 0);
   const stoneMaterial = new THREE.MeshStandardMaterial({
-    color: paletteColor(palette, 'stone', 0x49453e),
+    color: paletteColor(palette, 'stone', 0x49453e)
+      .lerp(paletteColor(palette, 'path', 0x78583a), .34),
     roughness: 1,
     vertexColors: true,
   });
@@ -371,19 +408,21 @@ function createPathLitter(palette) {
     const x = pathX(z) + THREE.MathUtils.clamp((random() - .5) * 2 + sideBias, -width, width);
     position.set(x, heightAt(x, z) + .055, z);
     quaternion.setFromEuler(new THREE.Euler(random() * .35, random() * Math.PI, random() * .35));
-    const size = .42 + random() * 1.55;
+    const size = .34 + random() * .82;
     scale.set(size * (1 + random()), size * (.35 + random() * .3), size * (.7 + random() * .8));
     matrix.compose(position, quaternion, scale);
     stones.setMatrixAt(i, matrix);
-    color.copy(paletteColor(palette, 'stone', 0x49453e)).offsetHSL(0, -.08, (random() - .5) * .13);
+    color.copy(paletteColor(palette, 'stone', 0x49453e))
+      .lerp(paletteColor(palette, 'path', 0x78583a), .28)
+      .offsetHSL(0, -.08, .035 + (random() - .5) * .09);
     stones.setColorAt(i, color);
   }
   stones.instanceMatrix.needsUpdate = true;
   stones.instanceColor.needsUpdate = true;
   group.add(stones);
 
-  const leafCount = 920;
-  const leafGeometry = new THREE.CircleGeometry(.105, 4);
+  const leafCount = 760;
+  const leafGeometry = new THREE.CircleGeometry(.076, 4);
   leafGeometry.rotateX(-Math.PI / 2);
   leafGeometry.rotateY(Math.PI / 4);
   const leafMaterial = new THREE.MeshStandardMaterial({
@@ -402,7 +441,7 @@ function createPathLitter(palette) {
     const x = pathX(z) + (random() - .5) * 4.3;
     position.set(x, heightAt(x, z) + .066, z);
     quaternion.setFromEuler(new THREE.Euler((random() - .5) * .18, random() * Math.PI, (random() - .5) * .18));
-    const size = .48 + random() * .95;
+    const size = .42 + random() * .72;
     scale.set(size * (1.1 + random()), 1, size * (.55 + random() * .35));
     matrix.compose(position, quaternion, scale);
     leaves.setMatrixAt(i, matrix);
@@ -415,18 +454,198 @@ function createPathLitter(palette) {
   return group;
 }
 
+function createBambooCanopyShade(palette) {
+  const geometry = new THREE.PlaneGeometry(140, 70, 56, 28);
+  geometry.rotateX(-Math.PI / 2);
+  const position = geometry.attributes.position;
+  for (let i = 0; i < position.count; i += 1) {
+    const x = position.getX(i);
+    const z = position.getZ(i) + 87;
+    position.setXYZ(i, x, heightAt(x, z) + .052, z);
+  }
+  position.needsUpdate = true;
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+
+  const shade = paletteColor(palette, 'bamboo', 0x163b34)
+    .lerp(paletteColor(palette, 'shadowTeal', 0x0b1b1d), .62);
+  const material = new THREE.ShaderMaterial({
+    name: 'Dappled bamboo canopy shade',
+    uniforms: { uShade: { value: shade } },
+    vertexShader: /* glsl */`
+      varying vec2 vUv;
+      varying vec2 vWorldXZ;
+      void main() {
+        vUv = uv;
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vWorldXZ = world.xz;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }
+    `,
+    fragmentShader: /* glsl */`
+      uniform vec3 uShade;
+      varying vec2 vUv;
+      varying vec2 vWorldXZ;
+      void main() {
+        float edge = smoothstep(0.0, .15, vUv.x)
+          * smoothstep(0.0, .15, 1.0 - vUv.x)
+          * smoothstep(0.0, .2, vUv.y)
+          * smoothstep(0.0, .12, 1.0 - vUv.y);
+        float broad = sin(vWorldXZ.x * .17 + vWorldXZ.y * .09)
+          * sin(vWorldXZ.x * .071 - vWorldXZ.y * .14);
+        float fine = sin(vWorldXZ.x * .63 + vWorldXZ.y * .47) * .5 + .5;
+        float dapple = smoothstep(-.45, .62, broad) * (.45 + fine * .55);
+        float alpha = edge * (.15 + dapple * .17);
+        gl_FragColor = vec4(uShade, alpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'Bamboo grove canopy shadow';
+  mesh.renderOrder = 2;
+  return mesh;
+}
+
+function createWetBankMesh(palette, surfaceMaps) {
+  const rows = 241;
+  const columns = 13;
+  const positions = new Float32Array(rows * columns * 3);
+  const uvs = new Float32Array(rows * columns * 2);
+  const bankBlend = new Float32Array(rows * columns);
+  const indices = [];
+
+  for (let row = 0; row < rows; row += 1) {
+    const along = row / (rows - 1);
+    const centerX = lerp(-TERRAIN_HALF + 0.5, TERRAIN_HALF - 0.5, along);
+    const centerZ = riverZ(centerX);
+    const derivative = riverDerivative(centerX);
+    const normalLength = Math.sqrt(1 + derivative * derivative);
+    const normalX = -derivative / normalLength;
+    const normalZ = 1 / normalLength;
+    const waterHalfWidth = 2.5 + 0.55 * (0.5 + 0.5 * Math.sin(centerX * 0.051));
+    const bankHalfWidth = waterHalfWidth + 5.5;
+
+    for (let column = 0; column < columns; column += 1) {
+      const acrossUnit = column / (columns - 1) * 2 - 1;
+      const across = acrossUnit * bankHalfWidth;
+      const x = centerX + normalX * across;
+      const z = centerZ + normalZ * across;
+      const vertex = row * columns + column;
+      const offset = vertex * 3;
+      positions[offset] = x;
+      positions[offset + 1] = heightAt(x, z) + .038;
+      positions[offset + 2] = z;
+
+      // World-projected UVs keep the scan at roughly 3.4 m per tile and avoid
+      // stretching as the stream bends through the basin.
+      const uvOffset = vertex * 2;
+      uvs[uvOffset] = x / 3.4;
+      uvs[uvOffset + 1] = z / 3.4;
+      bankBlend[vertex] = 1 - smoothstep(.64, 1, Math.abs(acrossUnit));
+    }
+  }
+
+  for (let row = 0; row < rows - 1; row += 1) {
+    for (let column = 0; column < columns - 1; column += 1) {
+      const a = row * columns + column;
+      const b = a + 1;
+      const c = a + columns;
+      const d = c + 1;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geometry.setAttribute('bankBlend', new THREE.BufferAttribute(bankBlend, 1));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+
+  const tint = paletteColor(palette, 'soil', 0x443327)
+    .lerp(new THREE.Color(0x5f4d40), .28)
+    .multiplyScalar(.62);
+  const material = new THREE.MeshStandardMaterial({
+    color: tint,
+    map: surfaceMaps.albedo,
+    normalMap: surfaceMaps.normal,
+    normalScale: new THREE.Vector2(.48, .48),
+    aoMap: surfaceMaps.orm,
+    aoMapIntensity: .92,
+    roughnessMap: surfaceMaps.orm,
+    roughness: .72,
+    metalness: 0,
+    transparent: true,
+    opacity: .98,
+    depthWrite: false,
+    alphaTest: .012,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  });
+
+  // Fade the scanned wet soil into the forest floor without another texture
+  // fetch or a conspicuous hard ribbon edge.
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nattribute float bankBlend;\nvarying float vBankBlend;',
+      )
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvBankBlend = bankBlend;',
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying float vBankBlend;',
+      )
+      .replace(
+        '#include <alphatest_fragment>',
+        'diffuseColor.a *= vBankBlend;\n#include <alphatest_fragment>',
+      )
+      .replace(
+        '#include <opaque_fragment>',
+        'outgoingLight *= 0.46;\n#include <opaque_fragment>',
+      );
+  };
+  material.customProgramCacheKey = () => 'biome-wet-bank-fade-v1';
+
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'Wet stream bed and banks';
+  mesh.receiveShadow = true;
+  mesh.renderOrder = 1;
+  mesh.userData.biomeSurface = 'wet-bank';
+  return mesh;
+}
+
 function createWaterMesh(palette) {
   const rows = 241;
-  const columns = 5;
+  const columns = 9;
   const positions = new Float32Array(rows * columns * 3);
   const colors = new Float32Array(rows * columns * 3);
   const baseHeights = new Float32Array(rows * columns);
   const waveWeights = new Float32Array(rows * columns);
   const indices = [];
   const sunColor = paletteColor(palette, 'sun', 0xffc86f);
+  // The sunset key is intentionally powerful; keep the diffuse water dark so
+  // only its moving specular band blooms into gold instead of bleaching the
+  // whole channel into a flat cream ribbon.
+  const clearTint = paletteColor(palette, 'shadowTeal', 0x173b3a)
+    .lerp(new THREE.Color(0x5b8a82), .56)
+    .multiplyScalar(.48);
   const copper = paletteColor(palette, 'water', 0xa95c39)
-    .lerp(sunColor, .17);
-  const shadow = paletteColor(palette, 'shadowTeal', 0x173b3a).lerp(copper, .34);
+    .lerp(sunColor, .38)
+    .multiplyScalar(.56);
+  const shadow = clearTint.clone().lerp(copper, .12);
   const color = new THREE.Color();
 
   for (let row = 0; row < rows; row += 1) {
@@ -456,8 +675,8 @@ function createWaterMesh(palette) {
       waveWeights[vertex] = 0.18 + 0.82 * (1 - Math.abs(acrossUnit));
 
       const ripple = .5 + .25 * Math.sin(x * .47 + z * .31) + .25 * Math.sin(x * .19 - z * .68 + .9);
-      color.copy(shadow).lerp(copper, 0.43 + waveWeights[vertex] * .27 + ripple * .18);
-      if (ripple > .86) color.lerp(sunColor, (ripple - .86) * .48);
+      color.copy(shadow).lerp(clearTint, .34 + waveWeights[vertex] * .24 + ripple * .18);
+      if (ripple > .82) color.lerp(sunColor, (ripple - .82) * .64);
       colors[offset] = color.r;
       colors[offset + 1] = color.g;
       colors[offset + 2] = color.b;
@@ -481,24 +700,84 @@ function createWaterMesh(palette) {
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
 
-  const material = new THREE.MeshPhysicalMaterial({
-    color: 0xffffff,
+  // A controlled unlit reflection model prevents the very strong sunset key
+  // from washing every water-facing normal to white. Surface geometry still
+  // carries the animated normals; the shader turns those ripples into a narrow
+  // gold track over a dark teal/copper body.
+  const material = new THREE.ShaderMaterial({
+    name: 'Copper stream reflection',
+    uniforms: THREE.UniformsUtils.merge([
+      THREE.UniformsLib.fog,
+      {
+        uTime: { value: 0 },
+        uDeep: { value: clearTint.clone().multiplyScalar(.78) },
+        uCopper: { value: copper.clone().multiplyScalar(.92) },
+        uSunColor: { value: sunColor.clone() },
+        uSunDirection: { value: new THREE.Vector3(-.48, .105, -.87).normalize() },
+      },
+    ]),
+    vertexShader: /* glsl */`
+      varying vec3 vColor;
+      varying vec3 vWorldPosition;
+      varying vec3 vWorldNormal;
+      varying vec3 vViewDirection;
+      #include <fog_pars_vertex>
+      void main() {
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vColor = color;
+        vWorldPosition = world.xyz;
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        vViewDirection = cameraPosition - world.xyz;
+        vec4 mvPosition = viewMatrix * world;
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }
+    `,
+    fragmentShader: /* glsl */`
+      uniform float uTime;
+      uniform vec3 uDeep;
+      uniform vec3 uCopper;
+      uniform vec3 uSunColor;
+      uniform vec3 uSunDirection;
+      varying vec3 vColor;
+      varying vec3 vWorldPosition;
+      varying vec3 vWorldNormal;
+      varying vec3 vViewDirection;
+      #include <fog_pars_fragment>
+      void main() {
+        vec3 viewDirection = normalize(vViewDirection);
+        vec3 rippleNormal = normalize(vWorldNormal + vec3(
+          sin(vWorldPosition.z * 1.31 - uTime * 1.8) * .055,
+          0.0,
+          cos(vWorldPosition.x * .72 + uTime * 1.35) * .042
+        ));
+        if (!gl_FrontFacing) rippleNormal = -rippleNormal;
+        float facing = clamp(dot(rippleNormal, viewDirection), 0.0, 1.0);
+        float fresnel = pow(1.0 - facing, 3.0);
+        vec3 halfVector = normalize(viewDirection + normalize(uSunDirection));
+        float sunGlint = pow(max(dot(rippleNormal, halfVector), 0.0), 92.0);
+        float brokenTrack = .56 + .44 * sin(
+          vWorldPosition.x * .83 + vWorldPosition.z * .36 + uTime * 2.1
+        );
+        sunGlint *= .42 + .58 * smoothstep(.32, .9, brokenTrack);
+        vec3 reflection = mix(uDeep, uCopper, .16 + fresnel * .58);
+        vec3 color = mix(vColor * .72, reflection, .52 + fresnel * .34);
+        color += uSunColor * sunGlint * 2.35;
+        gl_FragColor = vec4(color, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+        #include <fog_fragment>
+      }
+    `,
     vertexColors: true,
-    roughness: 0.38,
-    metalness: 0.04,
-    clearcoat: .28,
-    clearcoatRoughness: .34,
-    specularIntensity: .32,
-    specularColor: new THREE.Color(0x8f6349),
-    transparent: false,
-    opacity: 1,
-    depthWrite: true,
     side: THREE.DoubleSide,
-    emissive: copper.clone().multiplyScalar(.3),
-    emissiveIntensity: .62,
+    depthWrite: true,
+    transparent: false,
+    fog: true,
+    toneMapped: true,
   });
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.name = 'Animated copper stream';
+  mesh.name = 'Clear reflective stream';
   mesh.receiveShadow = true;
   mesh.renderOrder = 3;
   mesh.userData.biomeSurface = 'water';
@@ -516,11 +795,14 @@ export function createTerrain(scene, palette = {}) {
   const group = new THREE.Group();
   group.name = 'Sunset basin terrain system';
 
-  const terrain = createTerrainMesh(palette);
-  const path = createPathMesh(palette);
+  const surfaceMaps = loadTerrainSurfaceMaps();
+  const terrain = createTerrainMesh(palette, surfaceMaps.ground);
+  const path = createPathMesh(palette, surfaceMaps.path);
+  const wetBanks = createWetBankMesh(palette, surfaceMaps.bank);
   const water = createWaterMesh(palette);
   const pathLitter = createPathLitter(palette);
-  group.add(terrain, path, water, pathLitter);
+  const bambooShade = createBambooCanopyShade(palette);
+  group.add(terrain, path, wetBanks, water, pathLitter, bambooShade);
   scene.add(group);
 
   const waterPosition = water.geometry.attributes.position;
@@ -539,18 +821,22 @@ export function createTerrain(scene, palette = {}) {
     }
     waterPosition.needsUpdate = true;
     water.geometry.computeVertexNormals();
+    water.material.uniforms.uTime.value = time;
   }
 
   function dispose() {
     group.removeFromParent();
     terrain.geometry.dispose();
-    terrain.material.map?.dispose();
     terrain.material.dispose();
     path.geometry.dispose();
-    path.material.map?.dispose();
     path.material.dispose();
+    wetBanks.geometry.dispose();
+    wetBanks.material.dispose();
     water.geometry.dispose();
     water.material.dispose();
+    bambooShade.geometry.dispose();
+    bambooShade.material.dispose();
+    disposeTerrainSurfaceMaps(surfaceMaps);
     pathLitter.traverse((object) => {
       object.geometry?.dispose();
       object.material?.dispose();

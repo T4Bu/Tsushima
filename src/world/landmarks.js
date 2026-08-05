@@ -250,6 +250,137 @@ function collider(kind, x, y, z, radius, height) {
   return { kind, center, position: center, radius, height };
 }
 
+function addProceduralBarkDetail(material, darkColor) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uBarkDark = { value: darkColor };
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec3 vBarkPosition;',
+      )
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvBarkPosition = position;',
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nuniform vec3 uBarkDark;\nvarying vec3 vBarkPosition;',
+      )
+      .replace(
+        '#include <color_fragment>',
+        /* glsl */`#include <color_fragment>
+          vec3 barkP = vBarkPosition;
+          float warpedY = barkP.y * 12.0
+            + sin(barkP.x * 4.7 + barkP.z * 3.3) * 1.75;
+          float longGrain = sin(warpedY + sin(warpedY * .31) * 2.2);
+          float crossGrain = sin(barkP.y * 2.2 + barkP.x * 6.1 - barkP.z * 5.3);
+          float fissure = smoothstep(.62, .96, abs(longGrain * .78 + crossGrain * .22));
+          float broadTone = .5 + .5 * sin(barkP.y * .72 + barkP.z * 1.8);
+          diffuseColor.rgb *= mix(.76, 1.08, broadTone);
+          diffuseColor.rgb = mix(diffuseColor.rgb, uBarkDark, fissure * .38);
+        `,
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        /* glsl */`#include <roughnessmap_fragment>
+          roughnessFactor = clamp(roughnessFactor + fissure * .055, 0.0, 1.0);
+        `,
+      );
+  };
+  material.customProgramCacheKey = () => 'crimson-basin-procedural-bark-v1';
+}
+
+function addBacklitLeafRim(material, rimColor, intensity = .1) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uLeafRimColor = { value: rimColor };
+    shader.uniforms.uLeafRimIntensity = { value: intensity };
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec3 vLeafViewNormal;\nvarying vec3 vLeafViewDirection;',
+      )
+      .replace(
+        '#include <defaultnormal_vertex>',
+        '#include <defaultnormal_vertex>\nvLeafViewNormal = normalize(transformedNormal);',
+      )
+      .replace(
+        '#include <project_vertex>',
+        '#include <project_vertex>\nvLeafViewDirection = normalize(-mvPosition.xyz);',
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nuniform vec3 uLeafRimColor;\nuniform float uLeafRimIntensity;\nvarying vec3 vLeafViewNormal;\nvarying vec3 vLeafViewDirection;',
+      )
+      .replace(
+        '#include <opaque_fragment>',
+        /* glsl */`#include <opaque_fragment>
+          float leafRim = pow(
+            1.0 - clamp(abs(dot(normalize(vLeafViewNormal), normalize(vLeafViewDirection))), 0.0, 1.0),
+            2.5
+          );
+          gl_FragColor.rgb += uLeafRimColor * leafRim * uLeafRimIntensity;
+        `,
+      );
+  };
+  material.customProgramCacheKey = () => `crimson-basin-leaf-rim-${intensity}`;
+}
+
+function createContactGrounding(scene, definitions, color) {
+  if (!definitions.length) return null;
+  const geometry = new THREE.PlaneGeometry(1, 1);
+  geometry.rotateX(-Math.PI * .5);
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: color },
+      uOpacity: { value: .19 },
+    },
+    vertexShader: /* glsl */`
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        vec4 localPosition = instanceMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * modelViewMatrix * localPosition;
+      }
+    `,
+    fragmentShader: /* glsl */`
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      varying vec2 vUv;
+      void main() {
+        vec2 centered = (vUv - .5) * 2.0;
+        float radius = dot(centered, centered);
+        if (radius > 1.0) discard;
+        float softEdge = pow(1.0 - smoothstep(.08, 1.0, radius), 1.35);
+        gl_FragColor = vec4(uColor, softEdge * uOpacity);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+    toneMapped: false,
+  });
+  const grounding = new THREE.InstancedMesh(geometry, material, definitions.length);
+  grounding.name = 'Soft landmark contact grounding';
+  for (let i = 0; i < definitions.length; i++) {
+    const definition = definitions[i];
+    grounding.setMatrixAt(i, matrixAt(
+      new THREE.Vector3(definition.x, definition.y, definition.z),
+      new THREE.Vector3(definition.width, 1, definition.depth),
+      definition.yaw ?? 0,
+    ));
+  }
+  grounding.instanceMatrix.needsUpdate = true;
+  grounding.frustumCulled = false;
+  grounding.renderOrder = 1;
+  scene.add(grounding);
+  return grounding;
+}
+
 /**
  * Adds the basin's authored navigation anchors. All meshes are procedural and share
  * a deliberately small material/geometry set so the silhouettes remain inexpensive.
@@ -264,6 +395,7 @@ export function createLandmarks(scene, {
   const colliders = [];
   const focusPoints = [];
   const movingCloths = [];
+  const contactDefinitions = [];
 
   const bark = paletteColor(palette, 'bark', 0x4b3d31);
   const stone = paletteColor(palette, 'stone', 0x51483f);
@@ -272,12 +404,17 @@ export function createLandmarks(scene, {
   const bamboo = paletteColor(palette, 'bamboo', 0x163b34);
   const grassLit = paletteColor(palette, 'grassLit', 0xb88443);
   const sun = paletteColor(palette, 'sun', 0xffd17a);
+  const shadowTeal = paletteColor(palette, 'shadowTeal', 0x102b2b);
 
   const barkMaterial = new THREE.MeshStandardMaterial({
     color: bark,
     roughness: .94,
     metalness: 0,
   });
+  addProceduralBarkDetail(
+    barkMaterial,
+    bark.clone().lerp(shadowTeal, .58).multiplyScalar(.72),
+  );
   const darkWoodMaterial = new THREE.MeshStandardMaterial({
     color: bark.clone().multiplyScalar(.62),
     roughness: .98,
@@ -318,6 +455,7 @@ export function createLandmarks(scene, {
     branch([[.1, 1.08, -.02, .57], [1.9, .32, .8, .36], [4.15, .09, 1.45, .14], [5.25, .035, 1.9, .04]]),
   ];
   const trunk = new THREE.Mesh(makeBranchGeometry(treeBranches), barkMaterial);
+  trunk.name = 'Wind-swept broadleaf trunk';
   trunk.castShadow = true;
   trunk.receiveShadow = true;
   treeGroup.add(trunk);
@@ -362,6 +500,11 @@ export function createLandmarks(scene, {
   const leafDark = bamboo.clone().lerp(bark, .08);
   const leafMid = bamboo.clone().lerp(grassLit, .34);
   const leafWarm = grassLit.clone().lerp(sun, .18);
+  addBacklitLeafRim(
+    crownMaterial,
+    grassLit.clone().lerp(sun, .48),
+    .075,
+  );
   for (let i = 0; i < crownLayout.length; i++) {
     const [x, y, z, sx, sy, sz, warmth] = crownLayout[i];
     crown.setMatrixAt(i, matrixAt(
@@ -378,8 +521,68 @@ export function createLandmarks(scene, {
   if (crown.instanceColor) crown.instanceColor.needsUpdate = true;
   crown.castShadow = true;
   crown.receiveShadow = true;
+
+  // Sparse peripheral pads keep the large crown's outline feathery and catch
+  // the pale sunset rim without filling the branch windows beneath it.
+  const edgeLayout = [
+    [-9.55, 11.3, -.95, 1.35, .38, 1.0, .82],
+    [-8.2, 12.35, .4, 1.5, .42, 1.08, .58],
+    [-6.15, 13.45, -1.65, 1.45, .4, 1.03, .72],
+    [-4.15, 14.2, .7, 1.55, .42, 1.12, .52],
+    [-1.85, 15.15, -.55, 1.6, .44, 1.12, .78],
+    [1.0, 15.72, .45, 1.56, .43, 1.15, .9],
+    [4.0, 15.48, -.8, 1.65, .44, 1.18, .72],
+    [6.8, 15.0, .55, 1.7, .45, 1.2, .6],
+    [9.45, 14.5, -1.85, 1.62, .43, 1.15, .77],
+    [12.15, 13.8, -2.45, 1.5, .4, 1.08, .86],
+    [15.35, 12.25, -2.55, 1.35, .36, .96, .96],
+    [13.35, 11.25, .15, 1.42, .37, 1.0, .8],
+    [9.8, 10.85, 1.3, 1.38, .36, 1.02, .54],
+    [-5.75, 10.0, 1.55, 1.32, .35, .96, .68],
+  ];
+  const edgeMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: .98,
+    metalness: 0,
+    emissive: leafWarm.clone().multiplyScalar(.28),
+    emissiveIntensity: .17,
+  });
+  addBacklitLeafRim(
+    edgeMaterial,
+    grassLit.clone().lerp(sun, .62),
+    .115,
+  );
+  const edgeCrown = new THREE.InstancedMesh(
+    new THREE.DodecahedronGeometry(1, 0),
+    edgeMaterial,
+    edgeLayout.length,
+  );
+  edgeCrown.name = 'Backlit peripheral leaf masses';
+  for (let i = 0; i < edgeLayout.length; i++) {
+    const [x, y, z, sx, sy, sz, warmth] = edgeLayout[i];
+    edgeCrown.setMatrixAt(i, matrixAt(
+      new THREE.Vector3(x, y, z),
+      new THREE.Vector3(sx, sy, sz),
+      i * .83 + .2,
+      (i % 3 - 1) * .055,
+    ));
+    edgeCrown.setColorAt(
+      i,
+      leafMid.clone().lerp(leafWarm, .18 + warmth * .42),
+    );
+  }
+  edgeCrown.instanceMatrix.needsUpdate = true;
+  if (edgeCrown.instanceColor) edgeCrown.instanceColor.needsUpdate = true;
+  edgeCrown.receiveShadow = true;
+  crown.add(edgeCrown);
   treeGroup.add(crown);
   scene.add(treeGroup);
+
+  contactDefinitions.push(
+    { x: treeX, y: treeY + .055, z: treeZ, width: 3.4, depth: 2.65 },
+    { x: treeX - 2.0, y: treeY + .05, z: treeZ + .1, width: 4.1, depth: .82, yaw: -.12 },
+    { x: treeX + 1.8, y: treeY + .05, z: treeZ - .8, width: 4.2, depth: .78, yaw: -.48 },
+  );
 
   colliders.push(collider('ancient-tree', treeX, treeY + 5.5, treeZ, 1.25, 11));
   focusPoints.push(focusPoint('ancient-tree', treeX + 1.6, treeY + 6.5, treeZ, 15));
@@ -444,6 +647,13 @@ export function createLandmarks(scene, {
 
     movingCloths.push({ ...clothData, pivot });
     colliders.push(collider('banner-pole', definition.x, y + definition.poleHeight * .5, definition.z, .13, definition.poleHeight));
+    contactDefinitions.push({
+      x: definition.x,
+      y: y + .035,
+      z: definition.z,
+      width: .72,
+      depth: .58,
+    });
   }
   poles.instanceMatrix.needsUpdate = true;
   scene.add(poles);
@@ -500,6 +710,24 @@ export function createLandmarks(scene, {
 
   const leftPostWorld = new THREE.Vector3(toriiX + leftPostOffset.x, toriiY + 3, toriiZ + leftPostOffset.z);
   const rightPostWorld = new THREE.Vector3(toriiX + rightPostOffset.x, toriiY + 3, toriiZ + rightPostOffset.z);
+  contactDefinitions.push(
+    {
+      x: leftPostWorld.x,
+      y: toriiY + .04,
+      z: leftPostWorld.z,
+      width: 1.2,
+      depth: .9,
+      yaw: toriiYaw,
+    },
+    {
+      x: rightPostWorld.x,
+      y: toriiY + .04,
+      z: rightPostWorld.z,
+      width: 1.2,
+      depth: .9,
+      yaw: toriiYaw,
+    },
+  );
   colliders.push(
     collider('torii-post', leftPostWorld.x, leftPostWorld.y, leftPostWorld.z, .43, 6),
     collider('torii-post', rightPostWorld.x, rightPostWorld.y, rightPostWorld.z, .43, 6),
@@ -587,6 +815,14 @@ export function createLandmarks(scene, {
       .48 * lanternScale,
       2.7 * lanternScale,
     ));
+    contactDefinitions.push({
+      x: base.x,
+      y: base.y + .035,
+      z: base.z,
+      width: .88,
+      depth: .76,
+      yaw: lanternYaw,
+    });
   }
   for (const mesh of [lanternBase, lanternShaft, lanternFrames, lanternRoof, lanternCap, lanternGlow]) {
     mesh.instanceMatrix.needsUpdate = true;
@@ -689,6 +925,12 @@ export function createLandmarks(scene, {
   }
   rocks.instanceMatrix.needsUpdate = true;
   scene.add(rocks);
+
+  createContactGrounding(
+    scene,
+    contactDefinitions,
+    shadowTeal.clone().multiplyScalar(.38),
+  );
 
   let previousTime = 0;
   function update(time) {

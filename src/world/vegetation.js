@@ -106,6 +106,12 @@ function sharedUniforms(windUniforms, palette) {
     uPlayerPos: windUniforms?.uPlayerPos ?? { value: new Vector3(0, 2, 88) },
     uFogColor: windUniforms?.uFogColor ?? { value: paletteColor(palette, 'fog', 0xc98557) },
     uFogDensity: windUniforms?.uFogDensity ?? { value: 0.0095 },
+    // Matches atmosphere.js' low sunset key. Keeping this in the shared set
+    // lets every vegetation layer use the same front light and translucency.
+    uSunDirection: windUniforms?.uSunDirection
+      ?? { value: new Vector3(-0.48, 0.105, -0.87).normalize() },
+    uSunColor: windUniforms?.uSunColor
+      ?? { value: paletteColor(palette, 'sun', 0xffc86f) },
   };
 }
 
@@ -178,35 +184,40 @@ function finishGeometry(buffers) {
   return geometry;
 }
 
-function makeGrassTuftGeometry({ blades = 4, segments = 4, width = 0.04 } = {}) {
+function makeGrassTuftGeometry({
+  blades = 6,
+  segments = 3,
+  width = 0.028,
+  spread = 0.15,
+} = {}) {
   const buffers = makeBuffers();
   for (let blade = 0; blade < blades; blade += 1) {
-    // Offset, turn, shorten, and curve each ribbon independently. The old
-    // shared-root triangles read as pale spikes; these overlap like a real
-    // tuft while retaining one tiny base mesh for every instance.
-    const angle = (blade / blades) * Math.PI + Math.sin(blade * 2.17) * 0.19;
+    // Each instance represents a loose patch, not a radial prop: blade roots
+    // walk around a golden-angle spiral while their planes, heights, and lean
+    // stay decorrelated. This fills ground continuously without broad cards.
+    const angle = (blade / blades) * Math.PI + Math.sin(blade * 2.17) * 0.24;
     const sideX = Math.cos(angle);
     const sideZ = Math.sin(angle);
-    const normal = [-sideZ, 0.09, sideX];
+    const normal = [-sideZ, 0.075, sideX];
     const normalLength = Math.hypot(normal[0], normal[1], normal[2]);
     normal[0] /= normalLength;
     normal[1] /= normalLength;
     normal[2] /= normalLength;
-    const height = 0.62 + 0.38 * (0.5 + 0.5 * Math.sin(blade * 4.73 + 0.7));
-    const bladeWidth = width * (0.72 + 0.28 * (0.5 + 0.5 * Math.sin(blade * 3.11)));
-    const rootRadius = 0.018 + (blade % 3) * 0.012;
+    const height = 0.54 + 0.46 * (0.5 + 0.5 * Math.sin(blade * 4.73 + 0.7));
+    const bladeWidth = width * (0.68 + 0.32 * (0.5 + 0.5 * Math.sin(blade * 3.11)));
+    const rootRadius = spread * Math.sqrt((blade + 0.35) / blades);
     const rootAngle = blade * 2.399963;
     const rootX = Math.cos(rootAngle) * rootRadius;
     const rootZ = Math.sin(rootAngle) * rootRadius;
-    const curveStrength = 0.055 + 0.055 * (0.5 + 0.5 * Math.sin(blade * 1.91 + 1.2));
+    const curveStrength = 0.065 + 0.075 * (0.5 + 0.5 * Math.sin(blade * 1.91 + 1.2));
 
     for (let segment = 0; segment < segments; segment += 1) {
       const t0 = segment / segments;
       const t1 = (segment + 1) / segments;
-      const width0 = bladeWidth * (1 - 0.9 * t0);
-      const width1 = bladeWidth * (1 - 0.9 * t1);
-      const curve0 = curveStrength * (t0 * t0 + Math.sin(t0 * Math.PI) * 0.22);
-      const curve1 = curveStrength * (t1 * t1 + Math.sin(t1 * Math.PI) * 0.22);
+      const width0 = bladeWidth * (1 - 0.92 * t0);
+      const width1 = bladeWidth * (1 - 0.92 * t1);
+      const curve0 = curveStrength * (t0 * t0 + Math.sin(t0 * Math.PI) * 0.28);
+      const curve1 = curveStrength * (t1 * t1 + Math.sin(t1 * Math.PI) * 0.28);
       const center0 = [rootX + normal[0] * curve0, t0 * height, rootZ + normal[2] * curve0];
       const center1 = [rootX + normal[0] * curve1, t1 * height, rootZ + normal[2] * curve1];
       appendQuad(
@@ -227,12 +238,17 @@ function makeGrassTuftGeometry({ blades = 4, segments = 4, width = 0.04 } = {}) 
 function makeFlowerClumpGeometry() {
   const buffers = makeBuffers(true);
   const heads = [
-    { x: -0.11, z: 0.015, y: 0.73, rotation: 0.22, size: 1 },
-    { x: 0.115, z: -0.06, y: 0.61, rotation: 0.73, size: 0.84 },
+    { x: -0.11, z: 0.015, y: 0.73, rotation: 0.22, size: 1, petals: 7, segments: 2, stamens: 5 },
+    { x: 0.115, z: -0.06, y: 0.61, rotation: 0.73, size: 0.84, petals: 7, segments: 2, stamens: 5 },
+    // A low, simpler bloom closes gaps between instances without turning the
+    // foreground into uniformly large starbursts.
+    { x: 0.015, z: 0.14, y: 0.48, rotation: 1.41, size: 0.58, petals: 5, segments: 1, stamens: 3 },
+    { x: -0.255, z: -0.14, y: 0.54, rotation: 2.08, size: 0.55, petals: 5, segments: 1, stamens: 2 },
+    { x: 0.245, z: 0.17, y: 0.46, rotation: 2.77, size: 0.5, petals: 5, segments: 1, stamens: 2 },
   ];
 
   for (const head of heads) {
-    for (let plane = 0; plane < 2; plane += 1) {
+    for (let plane = 0; plane < 1; plane += 1) {
       const angle = plane * Math.PI * 0.5 + head.rotation;
       const sideX = Math.cos(angle) * 0.008;
       const sideZ = Math.sin(angle) * 0.008;
@@ -250,17 +266,17 @@ function makeFlowerClumpGeometry() {
       );
     }
 
-    for (let petal = 0; petal < 7; petal += 1) {
-      const angle = head.rotation + (petal / 7) * TAU;
+    for (let petal = 0; petal < head.petals; petal += 1) {
+      const angle = head.rotation + (petal / head.petals) * TAU;
       const radialX = Math.cos(angle);
       const radialZ = Math.sin(angle);
       const sideX = -radialZ;
       const sideZ = radialX;
       const petalLength = head.size * (0.235 + 0.034 * Math.sin(petal * 2.31 + head.rotation));
 
-      for (let segment = 0; segment < 3; segment += 1) {
-        const t0 = segment / 3;
-        const t1 = (segment + 1) / 3;
+      for (let segment = 0; segment < head.segments; segment += 1) {
+        const t0 = segment / head.segments;
+        const t1 = (segment + 1) / head.segments;
         const radius0 = petalLength * t0;
         const radius1 = petalLength * t1;
         // A narrow rise and hooked fall gives the petals the recurved profile
@@ -286,18 +302,13 @@ function makeFlowerClumpGeometry() {
     }
 
     // Hair-fine arcing stamens extend beyond the recurved petals.
-    for (let stamen = 0; stamen < 5; stamen += 1) {
-      const angle = head.rotation + (stamen / 5) * TAU + 0.31;
+    for (let stamen = 0; stamen < head.stamens; stamen += 1) {
+      const angle = head.rotation + (stamen / head.stamens) * TAU + 0.31;
       const radialX = Math.cos(angle);
       const radialZ = Math.sin(angle);
       const sideX = -radialZ * 0.0024 * head.size;
       const sideZ = radialX * 0.0024 * head.size;
       const reach = 0.315 * head.size;
-      const middle = [
-        head.x + radialX * reach * 0.53,
-        head.y + 0.09 * head.size,
-        head.z + radialZ * reach * 0.53,
-      ];
       const end = [
         head.x + radialX * reach,
         head.y + 0.055 * head.size,
@@ -307,21 +318,10 @@ function makeFlowerClumpGeometry() {
         buffers,
         [head.x - sideX, head.y + 0.015, head.z - sideZ],
         [head.x + sideX, head.y + 0.015, head.z + sideZ],
-        [middle[0] + sideX * 0.65, middle[1], middle[2] + sideZ * 0.65],
-        [middle[0] - sideX * 0.65, middle[1], middle[2] - sideZ * 0.65],
-        [0, 1, 0],
-        0.94,
-        0.975,
-        2,
-      );
-      appendQuad(
-        buffers,
-        [middle[0] - sideX * 0.65, middle[1], middle[2] - sideZ * 0.65],
-        [middle[0] + sideX * 0.65, middle[1], middle[2] + sideZ * 0.65],
         [end[0] + sideX * 0.24, end[1], end[2] + sideZ * 0.24],
         [end[0] - sideX * 0.24, end[1], end[2] - sideZ * 0.24],
         [0, 1, 0],
-        0.975,
+        0.94,
         1,
         2,
       );
@@ -340,10 +340,10 @@ function makeBambooStalkGeometry() {
     const t1 = (ySegment + 1) / heightSegments;
     const node0 = Math.pow(Math.abs(Math.cos(t0 * 7 * Math.PI)), 18) * 0.15;
     const node1 = Math.pow(Math.abs(Math.cos(t1 * 7 * Math.PI)), 18) * 0.15;
-    const r0 = 0.15 * (1 - 0.19 * t0) * (1 + node0);
-    const r1 = 0.15 * (1 - 0.19 * t1) * (1 + node1);
-    const lean0 = 0.055 * t0 * t0;
-    const lean1 = 0.055 * t1 * t1;
+    const r0 = 0.086 * (1 - 0.17 * t0) * (1 + node0);
+    const r1 = 0.086 * (1 - 0.17 * t1) * (1 + node1);
+    const lean0 = 0.07 * t0 * t0;
+    const lean1 = 0.07 * t1 * t1;
     for (let radial = 0; radial < radialSegments; radial += 1) {
       const a0 = (radial / radialSegments) * TAU;
       const a1 = ((radial + 1) / radialSegments) * TAU;
@@ -370,26 +370,68 @@ function makeBambooStalkGeometry() {
 
 function makeBambooLeafGeometry() {
   const buffers = makeBuffers();
-  for (let index = 0; index < 26; index += 1) {
-    const level = index / 25;
-    const angle = index * 2.399963 + Math.sin(index * 1.71) * 0.31;
-    const reach = 0.26 + 0.9 * Math.sin((level * 0.88 + 0.08) * Math.PI);
-    const center = [
-      Math.cos(angle) * reach,
-      0.61 + level * 0.39,
-      Math.sin(angle) * reach,
-    ];
-    const alongX = Math.cos(angle) * (0.24 + (index % 4) * 0.035);
-    const alongZ = Math.sin(angle) * (0.24 + (index % 4) * 0.035);
-    const sideX = -Math.sin(angle) * 0.065;
-    const sideZ = Math.cos(angle) * 0.065;
-    const root = [center[0] - alongX, center[1] - 0.018, center[2] - alongZ];
-    const tip = [center[0] + alongX, center[1] + 0.025, center[2] + alongZ];
-    const left = [center[0] + sideX, center[1] + 0.008, center[2] + sideZ];
-    const right = [center[0] - sideX, center[1] - 0.008, center[2] - sideZ];
-    const flex = 0.63 + level * 0.37;
-    appendTriangle(buffers, root, right, tip, flex);
-    appendTriangle(buffers, root, tip, left, flex);
+  const whorlCount = 11;
+  for (let whorl = 0; whorl < whorlCount; whorl += 1) {
+    const level = whorl / (whorlCount - 1);
+    const y = 0.53 + level * 0.46;
+    const angle = whorl * 2.17 + Math.sin(whorl * 1.37) * 0.28;
+    const dirX = Math.cos(angle);
+    const dirZ = Math.sin(angle);
+    const sideX = -dirZ;
+    const sideZ = dirX;
+    const reach = 0.52 + Math.sin((level * 0.82 + 0.1) * Math.PI) * 0.45;
+    const flex = 0.54 + level * 0.46;
+
+    // Thin branchlets visually bind each spray into a canopy mass.
+    const branchWidth = 0.011;
+    appendQuad(
+      buffers,
+      [-sideX * branchWidth, y - 0.012, -sideZ * branchWidth],
+      [sideX * branchWidth, y + 0.012, sideZ * branchWidth],
+      [dirX * reach + sideX * branchWidth * 0.35, y + 0.025, dirZ * reach + sideZ * branchWidth * 0.35],
+      [dirX * reach - sideX * branchWidth * 0.35, y + 0.005, dirZ * reach - sideZ * branchWidth * 0.35],
+      [sideX, 0.12, sideZ],
+      flex,
+      Math.min(1, flex + 0.14),
+    );
+
+    const leafCount = whorl === whorlCount - 1 ? 9 : 7;
+    for (let leaf = 0; leaf < leafCount; leaf += 1) {
+      const along = 0.2 + (leaf / Math.max(1, leafCount - 1)) * 0.76;
+      const fan = (leaf - (leafCount - 1) * 0.5) * 0.19;
+      const leafAngle = angle + fan + Math.sin(leaf * 2.9 + whorl) * 0.06;
+      const leafDirX = Math.cos(leafAngle);
+      const leafDirZ = Math.sin(leafAngle);
+      const leafSideX = -leafDirZ;
+      const leafSideZ = leafDirX;
+      const centerX = dirX * reach * along + sideX * fan * 0.16;
+      const centerZ = dirZ * reach * along + sideZ * fan * 0.16;
+      const centerY = y + Math.sin(leaf * 1.73 + whorl) * 0.018 + along * 0.018;
+      const halfLength = 0.09 + ((leaf + whorl) % 4) * 0.012;
+      const halfWidth = 0.018 + ((leaf * 3 + whorl) % 3) * 0.004;
+      const root = [
+        centerX - leafDirX * halfLength,
+        centerY - 0.008,
+        centerZ - leafDirZ * halfLength,
+      ];
+      const tip = [
+        centerX + leafDirX * halfLength,
+        centerY - 0.015,
+        centerZ + leafDirZ * halfLength,
+      ];
+      const left = [
+        centerX + leafSideX * halfWidth,
+        centerY + 0.006,
+        centerZ + leafSideZ * halfWidth,
+      ];
+      const right = [
+        centerX - leafSideX * halfWidth,
+        centerY - 0.006,
+        centerZ - leafSideZ * halfWidth,
+      ];
+      appendTriangle(buffers, root, right, tip, Math.min(1, flex + along * 0.18));
+      appendTriangle(buffers, root, tip, left, Math.min(1, flex + along * 0.18));
+    }
   }
   return finishGeometry(buffers);
 }
@@ -437,14 +479,36 @@ function appendTube(buffers, start, end, radius0, radius1, flex0, flex1, radialS
   }
 }
 
-function makeBroadleafTrunkGeometry() {
+function makeBroadleafTrunkGeometry(archetype = 0) {
   const buffers = makeBuffers();
-  appendTube(buffers, [0, 0, 0], [0.015, 0.72, 0], 0.07, 0.037, 0, 0.55, 7);
-  appendTube(buffers, [0.015, 0.7, 0], [0.035, 1, -0.015], 0.038, 0.015, 0.55, 0.9, 6);
-  appendTube(buffers, [0.01, 0.45, 0], [0.43, 0.76, 0.12], 0.029, 0.009, 0.34, 0.74, 6);
-  appendTube(buffers, [0, 0.52, 0], [-0.39, 0.81, -0.16], 0.027, 0.008, 0.4, 0.78, 6);
-  appendTube(buffers, [0.02, 0.61, -0.005], [0.18, 0.9, -0.38], 0.022, 0.007, 0.48, 0.84, 6);
-  appendTube(buffers, [0.015, 0.57, 0.005], [-0.16, 0.84, 0.36], 0.021, 0.007, 0.44, 0.81, 6);
+  const variants = [
+    [
+      [[0, 0, 0], [0.015, 0.72, 0], 0.07, 0.037, 0, 0.55, 7],
+      [[0.015, 0.7, 0], [0.035, 1, -0.015], 0.038, 0.015, 0.55, 0.9, 6],
+      [[0.01, 0.45, 0], [0.43, 0.76, 0.12], 0.029, 0.009, 0.34, 0.74, 6],
+      [[0, 0.52, 0], [-0.39, 0.81, -0.16], 0.027, 0.008, 0.4, 0.78, 6],
+      [[0.02, 0.61, -0.005], [0.18, 0.9, -0.38], 0.022, 0.007, 0.48, 0.84, 6],
+      [[0.015, 0.57, 0.005], [-0.16, 0.84, 0.36], 0.021, 0.007, 0.44, 0.81, 6],
+    ],
+    [
+      [[0, 0, 0], [-0.025, 0.7, 0.015], 0.064, 0.034, 0, 0.56, 7],
+      [[-0.025, 0.68, 0.015], [-0.1, 1.04, 0.055], 0.035, 0.012, 0.54, 0.94, 6],
+      [[-0.015, 0.49, 0.01], [0.29, 0.84, 0.13], 0.026, 0.008, 0.38, 0.8, 6],
+      [[-0.035, 0.57, 0.02], [-0.31, 0.91, -0.13], 0.024, 0.007, 0.44, 0.86, 6],
+      [[-0.05, 0.66, 0.02], [0.13, 0.98, -0.27], 0.02, 0.006, 0.51, 0.91, 5],
+      [[-0.055, 0.63, 0.03], [-0.2, 0.93, 0.29], 0.019, 0.006, 0.49, 0.89, 5],
+    ],
+    [
+      [[0, 0, 0], [0.055, 0.67, -0.015], 0.074, 0.04, 0, 0.53, 7],
+      [[0.055, 0.65, -0.015], [0.23, 0.99, -0.055], 0.041, 0.014, 0.52, 0.91, 6],
+      [[0.035, 0.43, 0], [0.5, 0.7, 0.11], 0.031, 0.009, 0.33, 0.69, 6],
+      [[0.08, 0.51, -0.01], [0.58, 0.82, -0.19], 0.027, 0.008, 0.4, 0.79, 6],
+      [[0.13, 0.61, -0.025], [0.62, 0.92, 0.18], 0.024, 0.007, 0.47, 0.87, 6],
+      [[0.12, 0.58, 0.005], [-0.22, 0.82, 0.29], 0.021, 0.006, 0.45, 0.8, 5],
+      [[0.19, 0.71, -0.035], [0.42, 1.0, -0.3], 0.018, 0.005, 0.55, 0.92, 5],
+    ],
+  ];
+  for (const args of variants[archetype % variants.length]) appendTube(buffers, ...args);
   return finishGeometry(buffers);
 }
 
@@ -465,19 +529,41 @@ function appendOctahedron(buffers, center, rx, ry, rz, flex) {
   appendTriangle(buffers, bottom, west, north, flex);
 }
 
-function makeBroadleafCanopyGeometry() {
+function makeBroadleafCanopyGeometry(archetype = 0) {
   const buffers = makeBuffers();
-  const clumps = [
-    [0.02, 0.92, -0.02, 0.29, 0.095, 0.24],
-    [0.42, 0.755, 0.12, 0.27, 0.072, 0.19],
-    [-0.39, 0.805, -0.16, 0.23, 0.12, 0.28],
-    [0.18, 0.91, -0.38, 0.2, 0.075, 0.3],
-    [-0.16, 0.855, 0.36, 0.3, 0.078, 0.2],
-    [0.3, 0.84, -0.08, 0.19, 0.12, 0.18],
-    [-0.24, 0.93, 0.075, 0.25, 0.07, 0.27],
-    [0.08, 1.025, 0.09, 0.19, 0.095, 0.17],
-    [-0.03, 0.76, -0.29, 0.16, 0.065, 0.21],
+  const variants = [
+    [
+      [0.02, 0.92, -0.02, 0.29, 0.095, 0.24],
+      [0.42, 0.755, 0.12, 0.27, 0.072, 0.19],
+      [-0.39, 0.805, -0.16, 0.23, 0.12, 0.28],
+      [0.18, 0.91, -0.38, 0.2, 0.075, 0.3],
+      [-0.16, 0.855, 0.36, 0.3, 0.078, 0.2],
+      [0.3, 0.84, -0.08, 0.19, 0.12, 0.18],
+      [-0.24, 0.93, 0.075, 0.25, 0.07, 0.27],
+      [0.08, 1.025, 0.09, 0.19, 0.095, 0.17],
+      [-0.03, 0.76, -0.29, 0.16, 0.065, 0.21],
+    ],
+    [
+      [-0.08, 0.99, 0.04, 0.22, 0.13, 0.2],
+      [0.27, 0.83, 0.12, 0.21, 0.1, 0.18],
+      [-0.3, 0.89, -0.1, 0.2, 0.145, 0.23],
+      [0.1, 0.96, -0.27, 0.18, 0.105, 0.22],
+      [-0.16, 0.94, 0.28, 0.2, 0.12, 0.2],
+      [0.02, 1.09, -0.04, 0.17, 0.12, 0.16],
+      [-0.04, 0.77, 0.02, 0.18, 0.09, 0.17],
+    ],
+    [
+      [0.25, 0.92, -0.04, 0.3, 0.07, 0.24],
+      [0.53, 0.79, 0.1, 0.3, 0.062, 0.2],
+      [0.58, 0.9, -0.2, 0.27, 0.072, 0.25],
+      [0.38, 1.0, 0.2, 0.28, 0.075, 0.22],
+      [0.1, 0.82, 0.31, 0.25, 0.065, 0.21],
+      [-0.2, 0.84, 0.27, 0.2, 0.09, 0.2],
+      [0.18, 0.75, -0.28, 0.2, 0.065, 0.24],
+      [0.68, 0.86, 0.04, 0.22, 0.06, 0.19],
+    ],
   ];
+  const clumps = variants[archetype % variants.length];
   for (const [x, y, z, rx, ry, rz] of clumps) {
     appendOctahedron(buffers, [x, y, z], rx, ry, rz, y);
   }
@@ -521,6 +607,39 @@ function buildInstanceData(targetCount, random, sample, maxAttemptsFactor = 30) 
   };
 }
 
+function selectInstanceData(data, bucket, bucketCount) {
+  const selected = [];
+  for (let index = 0; index < data.count; index += 1) {
+    const phaseBucket = Math.min(bucketCount - 1, Math.floor(data.phases[index] * bucketCount));
+    if (phaseBucket === bucket) selected.push(index);
+  }
+
+  const count = selected.length;
+  const offsets = new Float32Array(count * 3);
+  const scales = new Float32Array(count * 2);
+  const yaws = new Float32Array(count);
+  const tints = new Float32Array(count);
+  const phases = new Float32Array(count);
+
+  selected.forEach((sourceIndex, targetIndex) => {
+    offsets.set(data.offsets.subarray(sourceIndex * 3, sourceIndex * 3 + 3), targetIndex * 3);
+    scales.set(data.scales.subarray(sourceIndex * 2, sourceIndex * 2 + 2), targetIndex * 2);
+    yaws[targetIndex] = data.yaws[sourceIndex];
+    tints[targetIndex] = data.tints[sourceIndex];
+    phases[targetIndex] = data.phases[sourceIndex];
+  });
+
+  return { count, offsets, scales, yaws, tints, phases };
+}
+
+function scaleInstanceWidth(data, widthScale) {
+  const scales = new Float32Array(data.scales);
+  for (let index = 0; index < data.count; index += 1) {
+    scales[index * 2] *= widthScale;
+  }
+  return { ...data, scales };
+}
+
 function makeInstancedGeometry(baseGeometry, data, boundingRadius = 180) {
   const geometry = new InstancedBufferGeometry();
   for (const [name, attribute] of Object.entries(baseGeometry.attributes)) {
@@ -535,6 +654,33 @@ function makeInstancedGeometry(baseGeometry, data, boundingRadius = 180) {
   geometry.boundingSphere = new Sphere(new Vector3(0, 4, 0), boundingRadius);
   return geometry;
 }
+
+// This field is deliberately shared verbatim by grass, flowers, bamboo,
+// trees, and airborne debris. Large gust fronts are anchored in world space;
+// per-instance phase is reserved for small flutter, so a wave reads as one
+// event travelling through the whole biome instead of independent swaying.
+const WIND_FIELD_GLSL = /* glsl */`
+  vec3 sampleBiomeWind(vec2 worldXZ, float phase) {
+    vec2 direction = normalize(uWindDirection + vec2(0.0001));
+    vec2 across = vec2(-direction.y, direction.x);
+    float alongWind = dot(worldXZ, direction);
+    float crossWind = dot(worldXZ, across);
+    float warpedFront = alongWind * 0.105 - uTime * 1.28
+      + sin(crossWind * 0.035 + uTime * 0.19) * 1.35;
+    float front = 0.5 + 0.5 * sin(warpedFront);
+    float envelope = 0.5 + 0.5 * sin(
+      alongWind * 0.043 - uTime * 0.47 + crossWind * 0.018
+    );
+    float gust = smoothstep(0.5, 0.88, front) * (0.42 + 0.58 * envelope);
+    float flutter = sin(
+      uTime * 3.8 + phase * 6.2831853 + alongWind * 0.31
+    ) * 0.055;
+    float eddy = sin(crossWind * 0.11 + uTime * 0.54 + alongWind * 0.019)
+      * (0.05 + 0.09 * gust);
+    vec2 windVector = direction * (0.16 + gust * 0.94 + flutter) + across * eddy;
+    return vec3(windVector, gust);
+  }
+`;
 
 const INSTANCED_VERTEX_SHADER = /* glsl */`
   precision highp float;
@@ -557,19 +703,12 @@ const INSTANCED_VERTEX_SHADER = /* glsl */`
   varying float vFlex;
   varying float vTint;
   varying float vVariation;
-  varying float vLight;
   varying float vFogDistance;
   varying vec3 vWorldPosition;
+  varying vec3 vWorldNormal;
+  varying vec3 vViewDirection;
 
-  float windField(vec2 worldXZ, float phase) {
-    vec2 direction = normalize(uWindDirection + vec2(0.0001));
-    vec2 across = vec2(-direction.y, direction.x);
-    float leading = sin(dot(worldXZ, direction) * 0.16 - uTime * 1.7 + phase);
-    float crossing = sin(dot(worldXZ, across) * 0.071 + uTime * 0.61 + phase * 1.73);
-    float gust = smoothstep(0.02, 0.93, leading * 0.72 + crossing * 0.28);
-    float flutter = sin(uTime * 3.35 + phase * 2.4 + dot(worldXZ, vec2(0.37, 0.29)));
-    return 0.2 + gust * 0.86 + flutter * 0.055;
-  }
+  ${WIND_FIELD_GLSL}
 
   void main() {
     float c = cos(aYaw);
@@ -583,11 +722,10 @@ const INSTANCED_VERTEX_SHADER = /* glsl */`
     localPosition.xz = mat2(c, -s, s, c) * localPosition.xz;
 
     vec3 worldPosition = localPosition + aOffset;
-    vec2 windDirection = normalize(uWindDirection + vec2(0.0001));
     float flex = clamp(aFlex, 0.0, 1.0);
-    float gust = windField(aOffset.xz, aPhase * 6.2831853);
-    float bend = flex * flex * uBendScale * uWindStrength * gust;
-    worldPosition.xz += windDirection * bend * aScale.y;
+    vec3 wind = sampleBiomeWind(aOffset.xz, aPhase);
+    float bend = flex * flex * uBendScale * uWindStrength;
+    worldPosition.xz += wind.xy * bend * aScale.y;
 
     vec2 playerDelta = worldPosition.xz - uPlayerPos.xz;
     float playerDistance = length(playerDelta);
@@ -605,14 +743,14 @@ const INSTANCED_VERTEX_SHADER = /* glsl */`
     localNormal.y /= max(aScale.y, 0.001);
     localNormal.xz = mat2(c, -s, s, c) * localNormal.xz;
     vec3 worldNormal = normalize(mat3(modelMatrix) * localNormal);
-    vec3 sunDirection = normalize(vec3(-0.48, 0.72, 0.5));
-    vLight = 0.38 + 0.62 * max(dot(worldNormal, sunDirection), 0.0);
     vFlex = flex;
     vTint = aTint;
     vVariation = fract(sin(dot(normal.xz, vec2(12.9898, 78.233)) + aPhase * 3.17) * 43758.5453);
 
     vec4 transformedWorld = modelMatrix * vec4(worldPosition, 1.0);
     vWorldPosition = transformedWorld.xyz;
+    vWorldNormal = worldNormal;
+    vViewDirection = cameraPosition - transformedWorld.xyz;
     vFogDistance = distance(cameraPosition, transformedWorld.xyz);
     gl_Position = projectionMatrix * viewMatrix * transformedWorld;
   }
@@ -624,16 +762,21 @@ const FOLIAGE_FRAGMENT_SHADER = /* glsl */`
   uniform vec3 uLitColor;
   uniform vec3 uTipColor;
   uniform vec3 uFogColor;
+  uniform vec3 uSunDirection;
+  uniform vec3 uSunColor;
   uniform float uFogDensity;
   uniform float uFadeStart;
   uniform float uFadeEnd;
+  uniform float uTransmissionStrength;
+  uniform float uContactStrength;
 
   varying float vFlex;
   varying float vTint;
   varying float vVariation;
-  varying float vLight;
   varying float vFogDistance;
   varying vec3 vWorldPosition;
+  varying vec3 vWorldNormal;
+  varying vec3 vViewDirection;
 
   float ditherNoise(vec2 coordinate) {
     return fract(52.9829189 * fract(dot(coordinate, vec2(0.06711056, 0.00583715))));
@@ -643,17 +786,36 @@ const FOLIAGE_FRAGMENT_SHADER = /* glsl */`
     float fade = 1.0 - smoothstep(uFadeStart, uFadeEnd, vFogDistance);
     if (fade < ditherNoise(gl_FragCoord.xy)) discard;
 
-    float heightLight = smoothstep(0.06, 0.82, vFlex);
-    float lightMix = clamp(
-      vLight * mix(0.32, 1.0, heightLight)
-        + (vTint - 0.5) * 0.19
-        + (vVariation - 0.5) * 0.15,
+    vec3 normal = normalize(vWorldNormal);
+    if (!gl_FrontFacing) normal = -normal;
+    vec3 lightDirection = normalize(uSunDirection);
+    vec3 viewDirection = normalize(vViewDirection);
+    float facing = dot(normal, lightDirection);
+    float frontLight = max(facing, 0.0);
+    float wrappedLight = clamp((facing + 0.34) / 1.34, 0.0, 1.0);
+    float backLight = pow(max(dot(-normal, lightDirection), 0.0), 1.35);
+    float rim = pow(1.0 - abs(dot(normal, viewDirection)), 2.0);
+
+    float pigmentMix = clamp(
+      0.24 + wrappedLight * 0.53
+        + (vTint - 0.5) * 0.21
+        + (vVariation - 0.5) * 0.14,
       0.0,
       1.0
     );
-    vec3 color = mix(uBaseColor, uLitColor, lightMix);
-    color = mix(color, uTipColor, smoothstep(0.7, 1.0, vFlex) * (0.36 + vLight * 0.22));
-    color *= mix(0.48, 1.0, smoothstep(0.035, 0.58, vFlex));
+    vec3 color = mix(uBaseColor, uLitColor, pigmentMix);
+    float tipAmount = smoothstep(0.68, 1.0, vFlex)
+      * (0.26 + wrappedLight * 0.34);
+    color = mix(color, uTipColor, tipAmount);
+
+    float rootContact = 1.0 - smoothstep(0.025, 0.58, vFlex);
+    float contactShade = 1.0 - uContactStrength * rootContact
+      * mix(1.0, 0.72, wrappedLight);
+    color *= (0.43 + wrappedLight * 0.49 + frontLight * 0.16) * contactShade;
+
+    float transmission = (backLight * 0.3 + rim * 0.045)
+      * uTransmissionStrength * (0.22 + 0.78 * smoothstep(0.08, 0.9, vFlex));
+    color += uSunColor * transmission;
 
     float fogAmount = 1.0 - exp(-uFogDensity * uFogDensity * vFogDistance * vFogDistance);
     vec3 warmFog = uFogColor * mix(0.94, 1.075, smoothstep(-2.0, 16.0, vWorldPosition.y));
@@ -683,9 +845,12 @@ const FLOWER_VERTEX_SHADER = /* glsl */`
   varying float vFlex;
   varying float vTint;
   varying float vPart;
-  varying float vLight;
   varying float vFogDistance;
   varying vec3 vWorldPosition;
+  varying vec3 vWorldNormal;
+  varying vec3 vViewDirection;
+
+  ${WIND_FIELD_GLSL}
 
   void main() {
     float c = cos(aYaw);
@@ -696,13 +861,9 @@ const FLOWER_VERTEX_SHADER = /* glsl */`
     localPosition.xz = mat2(c, -s, s, c) * localPosition.xz;
     vec3 worldPosition = localPosition + aOffset;
 
-    vec2 windDirection = normalize(uWindDirection + vec2(0.0001));
-    vec2 across = vec2(-windDirection.y, windDirection.x);
-    float leading = sin(dot(aOffset.xz, windDirection) * 0.18 - uTime * 1.78 + aPhase * 6.2831853);
-    float crossing = sin(dot(aOffset.xz, across) * 0.064 + uTime * 0.57 + aPhase * 4.1);
-    float gust = 0.24 + smoothstep(0.04, 0.92, leading * 0.74 + crossing * 0.26);
     float flex = clamp(aFlex, 0.0, 1.0);
-    worldPosition.xz += windDirection * flex * flex * gust * uWindStrength * 0.31 * aScale.y;
+    vec3 wind = sampleBiomeWind(aOffset.xz, aPhase);
+    worldPosition.xz += wind.xy * flex * flex * uWindStrength * 0.31 * aScale.y;
 
     vec2 playerDelta = worldPosition.xz - uPlayerPos.xz;
     float playerDistance = length(playerDelta);
@@ -713,15 +874,18 @@ const FLOWER_VERTEX_SHADER = /* glsl */`
     if (distance(cameraPosition.xz, aOffset.xz) > uHardDistance) worldPosition.y -= 10000.0;
 
     vec3 localNormal = normal;
+    localNormal.xz /= max(aScale.x, 0.001);
+    localNormal.y /= max(aScale.y, 0.001);
     localNormal.xz = mat2(c, -s, s, c) * localNormal.xz;
     vec3 worldNormal = normalize(mat3(modelMatrix) * localNormal);
-    vLight = 0.42 + 0.58 * max(dot(worldNormal, normalize(vec3(-0.48, 0.72, 0.5))), 0.0);
     vFlex = flex;
     vTint = aTint;
     vPart = aPart;
 
     vec4 transformedWorld = modelMatrix * vec4(worldPosition, 1.0);
     vWorldPosition = transformedWorld.xyz;
+    vWorldNormal = worldNormal;
+    vViewDirection = cameraPosition - transformedWorld.xyz;
     vFogDistance = distance(cameraPosition, transformedWorld.xyz);
     gl_Position = projectionMatrix * viewMatrix * transformedWorld;
   }
@@ -733,17 +897,21 @@ const FLOWER_FRAGMENT_SHADER = /* glsl */`
   uniform vec3 uPetalColor;
   uniform vec3 uPetalDark;
   uniform vec3 uSunColor;
+  uniform vec3 uSunDirection;
   uniform vec3 uFogColor;
   uniform float uFogDensity;
   uniform float uFadeStart;
   uniform float uFadeEnd;
+  uniform float uTransmissionStrength;
+  uniform float uContactStrength;
 
   varying float vFlex;
   varying float vTint;
   varying float vPart;
-  varying float vLight;
   varying float vFogDistance;
   varying vec3 vWorldPosition;
+  varying vec3 vWorldNormal;
+  varying vec3 vViewDirection;
 
   float ditherNoise(vec2 coordinate) {
     return fract(52.9829189 * fract(dot(coordinate, vec2(0.06711056, 0.00583715))));
@@ -753,10 +921,33 @@ const FLOWER_FRAGMENT_SHADER = /* glsl */`
     float fade = 1.0 - smoothstep(uFadeStart, uFadeEnd, vFogDistance);
     if (fade < ditherNoise(gl_FragCoord.xy)) discard;
 
-    vec3 petal = mix(uPetalDark, uPetalColor, clamp(vLight + vTint * 0.18, 0.0, 1.0));
-    vec3 color = vPart < 0.5 ? uStemColor * mix(0.62, 1.0, vLight) : petal;
-    if (vPart > 1.5) color = mix(petal, uSunColor, 0.11);
-    color *= mix(0.72, 1.0, smoothstep(0.05, 0.72, vFlex));
+    vec3 normal = normalize(vWorldNormal);
+    if (!gl_FrontFacing) normal = -normal;
+    vec3 lightDirection = normalize(uSunDirection);
+    vec3 viewDirection = normalize(vViewDirection);
+    float facing = dot(normal, lightDirection);
+    float frontLight = max(facing, 0.0);
+    float wrappedLight = clamp((facing + 0.38) / 1.38, 0.0, 1.0);
+    float backLight = pow(max(dot(-normal, lightDirection), 0.0), 1.22);
+    float rim = pow(1.0 - abs(dot(normal, viewDirection)), 2.0);
+
+    vec3 petal = mix(
+      uPetalDark,
+      uPetalColor,
+      clamp(0.28 + wrappedLight * 0.58 + vTint * 0.16, 0.0, 1.0)
+    );
+    bool isPetal = vPart > 0.5;
+    vec3 color = isPetal
+      ? petal * (0.52 + wrappedLight * 0.55 + frontLight * 0.12)
+      : uStemColor * (0.38 + wrappedLight * 0.57);
+    if (vPart > 1.5) color = mix(color, uSunColor, 0.12);
+
+    float rootContact = (1.0 - smoothstep(0.025, 0.54, vFlex))
+      * (isPetal ? 0.18 : 1.0);
+    color *= 1.0 - uContactStrength * rootContact;
+    float transmission = (backLight * 0.34 + rim * 0.055)
+      * uTransmissionStrength * (isPetal ? 1.0 : 0.24);
+    color += uSunColor * transmission;
 
     float fogAmount = 1.0 - exp(-uFogDensity * uFogDensity * vFogDistance * vFogDistance);
     vec3 warmFog = uFogColor * mix(0.95, 1.08, smoothstep(-2.0, 12.0, vWorldPosition.y));
@@ -781,6 +972,8 @@ function foliageMaterial(common, colors, options = {}) {
       uShapeVariation: { value: options.shapeVariation ?? 0 },
       uFadeStart: { value: options.fadeStart ?? 68 },
       uFadeEnd: { value: options.fadeEnd ?? 116 },
+      uTransmissionStrength: { value: options.transmissionStrength ?? 0.3 },
+      uContactStrength: { value: options.contactStrength ?? 0.38 },
     },
     vertexShader: INSTANCED_VERTEX_SHADER,
     fragmentShader: FOLIAGE_FRAGMENT_SHADER,
@@ -803,6 +996,8 @@ function makeFlowerMaterial(common, palette) {
       uHardDistance: { value: 142 },
       uFadeStart: { value: 84 },
       uFadeEnd: { value: 136 },
+      uTransmissionStrength: { value: 0.58 },
+      uContactStrength: { value: 0.52 },
     },
     vertexShader: FLOWER_VERTEX_SHADER,
     fragmentShader: FLOWER_FRAGMENT_SHADER,
@@ -860,17 +1055,25 @@ function makeParticleField(common, palette, count, random) {
       varying float vAlpha;
       varying float vFogDistance;
 
+      ${WIND_FIELD_GLSL}
+
       void main() {
         vec2 direction = normalize(uWindDirection + vec2(0.0001));
         vec2 across = vec2(-direction.y, direction.x);
         float cycle = fract(aPhase + uTime * (0.022 + aSpeed * 0.018));
-        vec2 localXZ = position.xz + direction * (cycle * 84.0 - 42.0) * (0.55 + uWindStrength * 0.45);
-        localXZ += across * sin(cycle * 12.566 + aPhase * 17.0 + uTime) * (1.2 + aSpeed * 1.7);
+        vec2 baseLocalXZ = position.xz
+          + direction * (cycle * 84.0 - 42.0) * (0.55 + uWindStrength * 0.45);
+        vec3 wind = sampleBiomeWind(uPlayerPos.xz + baseLocalXZ, aPhase);
+        vec2 localXZ = baseLocalXZ
+          + wind.xy * (1.15 + aSpeed * 1.55) * uWindStrength;
+        localXZ += across * sin(cycle * 12.566 + aPhase * 17.0 + uTime)
+          * (0.35 + aSpeed * 0.62) * (0.45 + wind.z);
         localXZ = mod(localXZ + vec2(48.0), vec2(96.0)) - vec2(48.0);
         float flutter = sin(uTime * (2.1 + aSpeed) + aPhase * 31.0);
         vec3 worldPosition = uPlayerPos + vec3(
           localXZ.x,
-          position.y + sin(cycle * 3.1415926) * 3.2 + flutter * 0.55,
+          position.y + sin(cycle * 3.1415926) * 3.2
+            + flutter * 0.55 + wind.z * 0.42,
           localXZ.y
         );
         vec4 viewPosition = viewMatrix * vec4(worldPosition, 1.0);
@@ -985,10 +1188,10 @@ export function createVegetation(scene, {
     return clamp(shape * (0.28 + patchNoise * 0.84) * (0.66 + finerPatch * 0.4), 0, 0.96);
   };
 
-  const grassTarget = Math.round(20200 * density);
-  const reedTarget = Math.round(2200 * density);
-  const flowerTarget = Math.round(9400 * density);
-  const bambooTarget = Math.round(430 * Math.sqrt(density));
+  const grassTarget = Math.round(22500 * density);
+  const reedTarget = Math.round(1900 * density);
+  const flowerTarget = Math.round(11200 * density);
+  const bambooTarget = Math.round(780 * Math.sqrt(density));
   const treeTarget = Math.round(54 * Math.sqrt(density));
   const particleTarget = Math.round(820 * Math.sqrt(density));
 
@@ -999,12 +1202,12 @@ export function createVegetation(scene, {
     if (rng() > edgeFade) return null;
     const pathD = pathDistance(x, z);
     const riverD = riverDistance(x, z);
-    if (pathD < 1.85 || riverD < 2.75) return null;
+    if (pathD < 1.58 || riverD < 2.75) return null;
 
     const macro = fbm(x * 0.035, z * 0.035, SEED + 77);
     const flowerMass = flowerMassAt(x, z);
     const ridgeReduction = 1 - smoothstep(52, 83, z) * 0.74;
-    const pathSoftEdge = smoothstep(1.85, 5.2, pathD);
+    const pathSoftEdge = smoothstep(1.58, 4.65, pathD);
     const riverSoftEdge = smoothstep(2.75, 7.5, riverD);
     const crimsonOpening = 1 - smoothstep(0.08, 0.9, flowerMass) * 0.78;
     const acceptance = (0.56 + macro * 0.5)
@@ -1021,7 +1224,7 @@ export function createVegetation(scene, {
       x,
       y: safeHeight(x, z) + 0.012,
       z,
-      scaleX: 0.72 + rng() * 0.62,
+      scaleX: 0.82 + rng() * 0.62,
       scaleY: (0.54 + rng() * 0.61) * heightBias * flowerShortening * amberHeight,
       yaw: rng() * TAU,
       tint: clamp(macro * 0.82 + rng() * 0.22, 0, 1),
@@ -1056,11 +1259,11 @@ export function createVegetation(scene, {
     const z = -57 + rng() * 117;
     const pathD = pathDistance(x, z);
     const riverD = riverDistance(x, z);
-    if (pathD < 2.05 || riverD < 3.2) return null;
+    if (pathD < 1.82 || riverD < 3.2) return null;
 
     const patch = flowerMassAt(x, z);
     const patchNoise = fbm(x * 0.044, z * 0.044, SEED + 911);
-    const softPath = smoothstep(2.05, 5.7, pathD);
+    const softPath = smoothstep(1.82, 5.05, pathD);
     const softRiver = smoothstep(3.2, 7.6, riverD);
     if (rng() > clamp(patch * softPath * softRiver, 0, 0.96)) return null;
 
@@ -1089,8 +1292,8 @@ export function createVegetation(scene, {
       x,
       y: safeHeight(x, z) - 0.025,
       z,
-      scaleX: 0.78 + rng() * 0.72,
-      scaleY: 9.2 + rng() * 6.8,
+      scaleX: 0.54 + rng() * 0.42,
+      scaleY: 12.2 + rng() * 7.8,
       yaw: rng() * TAU,
       tint: 0.12 + groveNoise * 0.72,
       phase: rng(),
@@ -1118,13 +1321,27 @@ export function createVegetation(scene, {
     };
   }, 55);
 
-  const grassBase = makeGrassTuftGeometry({ blades: 4, segments: 4, width: 0.038 });
-  const reedBase = makeGrassTuftGeometry({ blades: 4, segments: 4, width: 0.029 });
+  const grassBase = makeGrassTuftGeometry({
+    blades: 6,
+    segments: 3,
+    width: 0.027,
+    spread: 0.15,
+  });
+  const reedBase = makeGrassTuftGeometry({
+    blades: 5,
+    segments: 4,
+    width: 0.021,
+    spread: 0.095,
+  });
   const flowerBase = makeFlowerClumpGeometry();
   const bambooStalkBase = makeBambooStalkGeometry();
   const bambooLeavesBase = makeBambooLeafGeometry();
-  const treeTrunkBase = makeBroadleafTrunkGeometry();
-  const treeCanopyBase = makeBroadleafCanopyGeometry();
+  const bambooCrownData = scaleInstanceWidth(bambooData, 1.08);
+  const treeArchetypeData = [0, 1, 2].map((archetype) => (
+    selectInstanceData(treeData, archetype, 3)
+  ));
+  const treeTrunkBases = [0, 1, 2].map((archetype) => makeBroadleafTrunkGeometry(archetype));
+  const treeCanopyBases = [0, 1, 2].map((archetype) => makeBroadleafCanopyGeometry(archetype));
 
   addLayer(root, 'Tawny grass', grassBase, grassData, foliageMaterial(common, {
     base: paletteColor(palette, 'grassShadow', 0x67502d).multiplyScalar(0.54),
@@ -1138,6 +1355,8 @@ export function createVegetation(scene, {
     hardDistance: 126,
     fadeStart: 70,
     fadeEnd: 118,
+    transmissionStrength: 0.34,
+    contactStrength: 0.6,
   }));
 
   addLayer(root, 'River reeds', reedBase, reedData, foliageMaterial(common, {
@@ -1151,6 +1370,8 @@ export function createVegetation(scene, {
     hardDistance: 132,
     fadeStart: 76,
     fadeEnd: 124,
+    transmissionStrength: 0.29,
+    contactStrength: 0.54,
   }));
 
   addLayer(root, 'Crimson flower field', flowerBase, flowerData, makeFlowerMaterial(common, palette));
@@ -1166,9 +1387,11 @@ export function createVegetation(scene, {
     hardDistance: 190,
     fadeStart: 150,
     fadeEnd: 188,
+    transmissionStrength: 0.02,
+    contactStrength: 0.28,
   }), 195);
 
-  addLayer(root, 'Bamboo crowns', bambooLeavesBase, bambooData, foliageMaterial(common, {
+  addLayer(root, 'Bamboo crowns', bambooLeavesBase, bambooCrownData, foliageMaterial(common, {
     base: paletteColor(palette, 'shadowTeal', 0x0b1b1d),
     lit: paletteColor(palette, 'bamboo', 0x163b34),
     tip: paletteColor(palette, 'grassShadow', 0x604d2d),
@@ -1179,9 +1402,11 @@ export function createVegetation(scene, {
     hardDistance: 190,
     fadeStart: 150,
     fadeEnd: 188,
+    transmissionStrength: 0.43,
+    contactStrength: 0.18,
   }), 195);
 
-  addLayer(root, 'Secondary tree trunks', treeTrunkBase, treeData, foliageMaterial(common, {
+  const treeTrunkMaterial = foliageMaterial(common, {
     base: paletteColor(palette, 'bark', 0x4b3d31).multiplyScalar(0.66),
     lit: paletteColor(palette, 'bark', 0x4b3d31),
     tip: paletteColor(palette, 'bark', 0x4b3d31).multiplyScalar(1.08),
@@ -1192,9 +1417,11 @@ export function createVegetation(scene, {
     hardDistance: 185,
     fadeStart: 145,
     fadeEnd: 180,
-  }), 190);
+    transmissionStrength: 0,
+    contactStrength: 0.26,
+  });
 
-  addLayer(root, 'Secondary tree crowns', treeCanopyBase, treeData, foliageMaterial(common, {
+  const treeCanopyMaterial = foliageMaterial(common, {
     base: paletteColor(palette, 'shadowTeal', 0x0b1b1d),
     lit: paletteColor(palette, 'bamboo', 0x163b34),
     tip: paletteColor(palette, 'grassLit', 0xb88443),
@@ -1206,7 +1433,31 @@ export function createVegetation(scene, {
     hardDistance: 190,
     fadeStart: 148,
     fadeEnd: 184,
-  }), 195);
+    transmissionStrength: 0.38,
+    contactStrength: 0.16,
+  });
+
+  let treeDrawCalls = 0;
+  treeArchetypeData.forEach((data, archetype) => {
+    if (data.count === 0) return;
+    addLayer(
+      root,
+      `Secondary tree trunks ${archetype + 1}`,
+      treeTrunkBases[archetype],
+      data,
+      treeTrunkMaterial,
+      190,
+    );
+    addLayer(
+      root,
+      `Secondary tree crowns ${archetype + 1}`,
+      treeCanopyBases[archetype],
+      data,
+      treeCanopyMaterial,
+      195,
+    );
+    treeDrawCalls += 2;
+  });
 
   const particles = makeParticleField(common, palette, particleTarget, random);
   root.add(particles);
@@ -1219,7 +1470,7 @@ export function createVegetation(scene, {
     bambooStalks: bambooData.count,
     broadleafTrees: treeData.count,
     windborneParticles: particleTarget,
-    drawCalls: 8,
+    drawCalls: 6 + treeDrawCalls,
   });
 
   return {

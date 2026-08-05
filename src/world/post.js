@@ -60,12 +60,12 @@ export function createPostPipeline(renderer, scene, camera, { quality = 'high' }
   const renderPass = new RenderPass(scene, camera);
   const bloom = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    quality === 'low' ? .12 : .24,
+    quality === 'low' ? .1 : .18,
     .62,
     .72,
   );
-  bloom.threshold = .86;
-  bloom.radius = .55;
+  bloom.threshold = .94;
+  bloom.radius = .48;
 
   const grade = new ShaderPass(GradeShader);
   const output = new OutputPass();

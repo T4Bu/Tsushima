@@ -1,58 +1,100 @@
 # Crimson Wind Basin
 
-A real-time, walkable 250 × 250 metre biome inspired by the cinematic landscape language of *Ghost of Tsushima*. It is an original place: a bamboo ridge opens into a crimson spider-lily floodplain, an amber reed basin, a shallow copper stream, and a wind-shaped sanctuary tree.
+Crimson Wind Basin is a real-time, walkable 250 Ã— 250 metre biome inspired by
+the cinematic landscape language of *Ghost of Tsushima*. It is an original
+place rather than a recreation of a shipped location: a bamboo ridge opens into
+a crimson spider-lily floodplain, an amber reed basin, a shallow reflective
+stream, and a wind-shaped sanctuary tree.
 
-The scene is entirely procedural. There are no downloaded models or texture packs: terrain, flowers, grass, bamboo, trees, landmarks, water, particles, fog, sky, and ambient wind audio are generated at runtime.
+The scene uses a hybrid asset approach. Terrain form, habitat masks, vegetation,
+bamboo, flowers, landmarks, water motion, wind, particles, sky, fog, and ambient
+audio are generated or assembled procedurally at runtime. A compact set of
+locally licensed Megascans surface maps adds PBR detail to the forest floor,
+trail, and wet stream banks. Two MIT-licensed EZ-Tree models and related sprites
+supply the nearby and distant broadleaf silhouettes; deterministic placement,
+instancing, wind deformation, tinting, and contact shadows remain runtime code.
+If those tree files fail to load, the procedural woodland remains as an offline
+fallback.
 
-## Run it
+## Run locally
+
+The project requires Node.js and npm. On Windows PowerShell:
 
 ```powershell
 npm.cmd install
 npm.cmd run dev
 ```
 
-Open the local URL printed by Vite (normally `http://127.0.0.1:5173`) and choose **Enter the basin**.
+Open the URL printed by Vite, normally <http://127.0.0.1:5173>, then choose
+**Enter the basin**. Click the rendered scene again whenever you need to
+reacquire mouse look.
 
 ## Controls
 
 | Input | Action |
-|---|---|
-| `W A S D` | Walk |
-| Mouse | Look |
+| --- | --- |
+| `W A S D` or arrow keys | Walk |
+| Mouse | Look while the pointer is captured |
 | `Shift` | Sprint |
-| `P` | Toggle photo mode |
+| `P` | Toggle photo mode and the HUD |
 | `R` | Return to the bamboo entry |
-| `1`–`5` | Jump to curated viewpoints |
+| `1` | Entry viewpoint |
+| `2` | Basin reveal viewpoint |
+| `3` | Sanctuary tree viewpoint |
+| `4` | River viewpoint |
+| `5` | Meadow viewpoint |
 | `Esc` | Release the pointer |
 
-The player is grounded against the same analytic height function used to build the terrain, path, riverbanks, vegetation, bridge, and landmarks.
+The player is grounded against the same deterministic analytic height function
+used to build the terrain, path, stream bed, vegetation, bridge, and landmarks.
 
-## Build and visual capture
+## Build, preview, and capture
 
 ```powershell
 npm.cmd run build
+npm.cmd run preview
+```
+
+The production bundle is written to `dist/`. To render the regression views:
+
+```powershell
 npm.cmd run capture
 ```
 
-`npm.cmd run capture` renders five deterministic 1600 × 900 views into `captures/` and records browser errors and scene statistics in `captures/manifest.json`.
+The capture script starts a local Vite server on port 4173 when needed, renders
+five deterministic 1600 Ã— 900 views at simulation time `18.5`, and writes
+`entry.png`, `reveal.png`, `meadow.png`, `river.png`, `tree.png`, plus browser
+errors and scene statistics in `captures/manifest.json`.
 
-For a direct deterministic viewpoint, use query parameters:
+You can open a deterministic view directly while the dev server is running:
 
 ```text
 http://127.0.0.1:5173/?shot=reveal&time=18.5&quality=high
 ```
 
-`shot` accepts `entry`, `reveal`, `meadow`, `river`, or `tree`. `quality` accepts `high`, `medium`, or `low`.
+`shot` accepts `entry`, `reveal`, `meadow`, `river`, or `tree`. `quality`
+accepts `high`, `medium`, or `low`; `time` freezes the simulation at the given
+number of seconds.
 
 ## Rendering approach
 
-- GPU-instanced tawny grass, reeds, crimson flowers, bamboo, and tree foliage
-- One shared world-space gust field across vegetation, banners, particles, and water
-- Large analytic habitat masks that create deliberate red/gold/green color masses
-- Deterministic 250 m heightfield with a walkable S-path and shallow S-stream
-- Procedural hero tree, torii, lanterns, bridge, rocks, and exposed roots
-- Low sunset key, cool shadow fill, layered silhouettes, exponential amber fog, bloom, vignette, and film grain
-- ACES filmic tone mapping and a capped device-pixel ratio for stable performance
-- Generated filtered-noise wind ambience after the first user interaction
+- GPU-instanced grass, reeds, crimson flowers, bamboo, tree parts, and distant
+  tree sprites
+- One deterministic world-space gust field shared by vegetation, tree shaders,
+  banners, particles, and water
+- Large analytic habitat masks that create deliberate red, gold, and green
+  color masses instead of uniform procedural scatter
+- A 250 m heightfield with a walkable winding path and shallow meandering stream
+- Compact albedo, OpenGL normal, and packed ORM maps for forest, path, and wet
+  bank surfaces; the source-resolution scans are not shipped
+- Dark teal/copper water with animated geometry, view-angle reflections, and a
+  narrow broken track of sunset glints
+- Procedural torii, lanterns, bridge, rocks, exposed roots, and hero-tree
+  structure combined with licensed broadleaf foliage and woodland assets
+- Low sunset key, cool shadow fill, layered silhouettes, exponential amber fog,
+  bloom, vignette, film grain, ACES filmic tone mapping, and capped pixel ratio
+- Filtered-noise wind ambience generated after the first user interaction
 
-The design and palette decisions are recorded in [direction.md](./direction.md).
+Art-direction decisions are recorded in [direction.md](./direction.md). Asset
+origins and redistribution cautions are summarized in
+[ASSET_PROVENANCE.md](./ASSET_PROVENANCE.md).

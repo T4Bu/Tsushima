@@ -84,7 +84,7 @@ canvas { display: block; width: 100%; height: 100%; }
 .wind-readout svg { width: 38px; height: 38px; overflow: visible; }
 .wind-readout circle { fill: none; stroke: rgba(240,207,150,.24); stroke-width: .8; stroke-dasharray: 1 4; }
 .wind-readout path { fill: none; stroke: #e0b86a; stroke-width: 1.1; transition: transform .4s; transform-origin: 23px 23px; }
-.reticle { position: fixed; z-index: 7; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border: 1px solid rgba(255,239,210,.75); border-radius: 50%; transition: opacity .4s; }
+.reticle { position: fixed; z-index: 7; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border: 1px solid rgba(255,239,210,.75); border-radius: 50%; transition: opacity .4s; pointer-events: none; }
 .hint { position: fixed; z-index: 8; bottom: 35px; left: 50%; transform: translateX(-50%); color: rgba(255,240,215,.72); font-size: 10px; text-transform: uppercase; letter-spacing: .18em; text-shadow: 0 2px 8px #000; transition: opacity .4s; }
 
 .loading { position: fixed; z-index: 20; inset: 0; background: #100c0d; display: flex; align-items: center; justify-content: center; flex-direction: column; transition: opacity .75s ease, visibility .75s; }

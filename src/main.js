@@ -4,6 +4,7 @@ import { createWindAudio } from './world/audio.js';
 import { createAtmosphere } from './world/atmosphere.js';
 import { createPlayerController } from './world/controller.js';
 import { createLandmarks } from './world/landmarks.js';
+import { createNaturalTreeLayer } from './world/natural-assets.js';
 import { createPostPipeline } from './world/post.js';
 import {
   createTerrain,
@@ -69,7 +70,7 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality === 'high' ? 1.5 : 1.15));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = .96;
+renderer.toneMappingExposure = .9;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
@@ -103,30 +104,71 @@ const vegetation = createVegetation(scene, {
   quality,
 });
 
+let naturalTrees = { stats: Object.freeze({ naturalTrees: 0, variants: 0, drawCalls: 0 }) };
+let assetLoadFinished = false;
+createNaturalTreeLayer(scene, {
+    renderer,
+    heightAt,
+    distanceToPath,
+    distanceToRiver,
+    windUniforms,
+    quality,
+  })
+  .then((layer) => {
+    naturalTrees = layer;
+    if (window.__BIOME_STATS__) {
+      window.__BIOME_STATS__.naturalAssets = layer.stats;
+      window.__BIOME_STATS__.naturalTreeAssetsLoaded = true;
+      window.__BIOME_STATS__.vegetation = {
+        ...window.__BIOME_STATS__.vegetation,
+        drawCalls: Math.max(
+          0,
+          window.__BIOME_STATS__.vegetation.drawCalls
+            - layer.stats.hiddenProceduralDrawCalls,
+        ),
+        proceduralTreeDrawCallsHidden: layer.stats.hiddenProceduralDrawCalls,
+      };
+    }
+  })
+  .catch((error) => {
+    // The procedural woodland remains visible as a complete offline fallback.
+    console.warn('Natural tree layer could not be loaded; using procedural trees.', error);
+  })
+  .finally(() => {
+    assetLoadFinished = true;
+  });
+
 const shotPresets = {
   entry: {
     eye: new THREE.Vector3(pathX(92) + 1.5, 0, 92),
     target: new THREE.Vector3(pathX(52), 3.2, 52),
+    fov: 56,
   },
   reveal: {
-    eye: new THREE.Vector3(pathX(55) + 1.6, 0, 55),
-    target: new THREE.Vector3(-18, 4.1, -27),
+    eye: new THREE.Vector3(pathX(49) + 1.2, 0, 49),
+    target: new THREE.Vector3(-24, 5, -31),
+    fov: 52,
   },
   tree: {
-    eye: new THREE.Vector3(8, 0, -7),
-    target: new THREE.Vector3(-27, 8.2, -32),
+    eye: new THREE.Vector3(4, 0, -10),
+    target: new THREE.Vector3(-27, 7, -32),
+    fov: 50,
   },
   river: {
     eye: new THREE.Vector3(32, 0, -36),
     target: new THREE.Vector3(11.8, -.7, -22.5),
+    fov: 54,
   },
   meadow: {
     eye: new THREE.Vector3(-38, 0, 22),
     target: new THREE.Vector3(-9, 2.6, -29),
+    fov: 52,
   },
 };
 
 const startPreset = shotPresets[captureShot] ?? shotPresets.entry;
+camera.fov = startPreset.fov ?? 58;
+camera.updateProjectionMatrix();
 const controller = createPlayerController(camera, renderer.domElement, {
   heightAt,
   colliders: landmarks.colliders,
@@ -174,6 +216,8 @@ function updateLocation(position) {
 function setShot(name) {
   const preset = shotPresets[name];
   if (!preset) return;
+  camera.fov = preset.fov ?? 58;
+  camera.updateProjectionMatrix();
   controller.teleport(preset.eye, preset.target);
 }
 
@@ -210,6 +254,7 @@ function resize() {
 window.addEventListener('resize', resize);
 
 let frameCount = 0;
+let experienceReady = false;
 function frame() {
   const delta = Math.min(clock.getDelta(), .05);
   if (!Number.isFinite(fixedTime)) elapsed += delta;
@@ -230,7 +275,8 @@ function frame() {
   post.render(delta, elapsed, photoMode);
 
   frameCount++;
-  if (frameCount === 2) {
+  if (!experienceReady && frameCount >= 2 && assetLoadFinished) {
+    experienceReady = true;
     loading.classList.add('is-done');
     if (captureShot) {
       welcome.classList.add('is-gone');
@@ -246,8 +292,11 @@ window.__BIOME_READY__ = false;
 window.__BIOME_STATS__ = {
   quality,
   procedural: true,
+  hybridAssets: true,
+  naturalTreeAssetsLoaded: false,
   worldSizeMeters: 250,
   vegetation: vegetation.stats ?? {},
+  naturalAssets: naturalTrees.stats ?? {},
   controls: ['WASD', 'mouse', 'Shift', 'P', 'R', '1-5'],
 };
 window.__BIOME_SET_SHOT__ = setShot;
