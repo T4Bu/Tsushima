@@ -76,6 +76,18 @@ function fbm(x, z, seed = SEED) {
   return total / normalization;
 }
 
+function groundFlowYawAt(x, z) {
+  // Broad correlated turns establish the resting direction of whole grass
+  // lanes. The live gust shader bends those lanes further without erasing the
+  // quieter patch-to-patch structure visible between gusts.
+  const broad = (fbm(x * .024, z * .024, SEED + 8123) - .5) * 2;
+  const cross = (fbm(x * .052 + 13, z * .052 - 7, SEED + 9157) - .5) * 2;
+  const flowX = -.72 + broad * .86 + cross * .3;
+  const flowZ = -.69 + cross * .78 - broad * .27;
+  // Flowing-grass geometry points along local +Z before the instance yaw.
+  return Math.atan2(-flowX, flowZ);
+}
+
 function qualityScale(quality) {
   if (typeof quality === 'number' && Number.isFinite(quality)) {
     return clamp(quality, 0.2, 1.25);
@@ -252,6 +264,198 @@ function makeGrassTuftGeometry({
       );
     }
   }
+  return finishGeometry(buffers);
+}
+
+const FLOWING_GRASS_STYLES = [
+  {
+    blades: 5,
+    segments: 2,
+    width: .034,
+    spread: .24,
+    minHeight: .38,
+    heightRange: .22,
+    minReach: .4,
+    reachRange: .35,
+    drop: .7,
+    fan: .78,
+    curl: .18,
+    crossEvery: 3,
+    crossTurn: .95,
+  },
+  {
+    blades: 10,
+    segments: 5,
+    width: .032,
+    spread: .27,
+    minHeight: .7,
+    heightRange: .44,
+    minReach: .5,
+    reachRange: .34,
+    drop: .68,
+    fan: .4,
+    curl: .18,
+    crossEvery: 5,
+    crossTurn: 1.02,
+  },
+  {
+    blades: 8,
+    segments: 4,
+    width: .037,
+    spread: .3,
+    minHeight: .52,
+    heightRange: .36,
+    minReach: .62,
+    reachRange: .36,
+    drop: .82,
+    fan: .62,
+    curl: .23,
+    crossEvery: 4,
+    crossTurn: 1.18,
+  },
+];
+
+function makeFlowingGrassGeometry(archetype = 0) {
+  const buffers = makeBuffers();
+  const style = FLOWING_GRASS_STYLES[archetype % FLOWING_GRASS_STYLES.length];
+
+  for (let blade = 0; blade < style.blades; blade += 1) {
+    const variation = .5 + .5 * Math.sin(blade * 4.73 + archetype * 1.31);
+    let directionAngle = Math.sin(blade * 3.17 + archetype * .83) * style.fan;
+    if (blade > 0 && blade % style.crossEvery === 0) {
+      directionAngle += (blade % 2 === 0 ? 1 : -1) * style.crossTurn;
+    }
+    const dirX = Math.sin(directionAngle);
+    const dirZ = Math.cos(directionAngle);
+    const sideX = -dirZ;
+    const sideZ = dirX;
+    const rootRadius = style.spread * Math.sqrt((blade + .32) / style.blades);
+    const rootAngle = blade * 2.399963 + archetype * .47;
+    const rootX = Math.cos(rootAngle) * rootRadius;
+    const rootZ = Math.sin(rootAngle) * rootRadius;
+    const height = style.minHeight + style.heightRange * variation;
+    const reach = style.minReach
+      + style.reachRange * (.5 + .5 * Math.sin(blade * 2.11 + archetype * 1.7));
+    const drop = style.drop * (.78 + variation * .32);
+    const curlSign = blade % 2 === 0 ? 1 : -1;
+    const bladeWidth = style.width * (.74 + variation * .38);
+
+    const centerAt = (t) => {
+      const arc = t * t * (3 - 2 * t);
+      const sideways = Math.sin(t * Math.PI) * style.curl * curlSign
+        * (.65 + variation * .45);
+      return [
+        rootX + dirX * reach * arc + sideX * sideways,
+        height * (t - drop * Math.pow(t, 2.35)),
+        rootZ + dirZ * reach * arc + sideZ * sideways,
+      ];
+    };
+
+    for (let segment = 0; segment < style.segments; segment += 1) {
+      const t0 = segment / style.segments;
+      const t1 = (segment + 1) / style.segments;
+      const center0 = centerAt(t0);
+      const center1 = centerAt(t1);
+      const tangent = [
+        center1[0] - center0[0],
+        center1[1] - center0[1],
+        center1[2] - center0[2],
+      ];
+      let normal = [
+        -sideZ * tangent[1],
+        sideZ * tangent[0] - sideX * tangent[2],
+        sideX * tangent[1],
+      ];
+      const normalLength = Math.hypot(normal[0], normal[1], normal[2]) || 1;
+      normal = normal.map((component) => component / normalLength);
+      const width0 = bladeWidth * (1 - .9 * t0);
+      const width1 = bladeWidth * (1 - .9 * t1);
+      appendQuad(
+        buffers,
+        [center0[0] - sideX * width0, center0[1], center0[2] - sideZ * width0],
+        [center0[0] + sideX * width0, center0[1], center0[2] + sideZ * width0],
+        [center1[0] + sideX * width1, center1[1], center1[2] + sideZ * width1],
+        [center1[0] - sideX * width1, center1[1], center1[2] - sideZ * width1],
+        normal,
+        t0,
+        t1,
+      );
+    }
+  }
+  return finishGeometry(buffers);
+}
+
+function makeFernClumpGeometry() {
+  const buffers = makeBuffers();
+  const frondCount = 7;
+  for (let frond = 0; frond < frondCount; frond += 1) {
+    const angle = frond * 2.399963 + Math.sin(frond * 1.71) * .24;
+    const dirX = Math.cos(angle);
+    const dirZ = Math.sin(angle);
+    const sideX = -dirZ;
+    const sideZ = dirX;
+    const height = .5 + .31 * (.5 + .5 * Math.sin(frond * 3.13 + .4));
+    const reach = .11 + .24 * (.5 + .5 * Math.sin(frond * 2.37 + 1.1));
+    const halfWidth = .2 + .12 * (.5 + .5 * Math.sin(frond * 4.17));
+    const rootRadius = .025 + frond * .005;
+    const root = [dirX * rootRadius, .012, dirZ * rootRadius];
+    const top = [root[0] + dirX * reach, height, root[2] + dirZ * reach];
+    const tangent = [top[0] - root[0], top[1] - root[1], top[2] - root[2]];
+    let normal = [
+      -sideZ * tangent[1],
+      sideZ * tangent[0] - sideX * tangent[2],
+      sideX * tangent[1],
+    ];
+    const normalLength = Math.hypot(normal[0], normal[1], normal[2]) || 1;
+    normal = normal.map((component) => component / normalLength);
+    appendTexturedQuad(
+      buffers,
+      [root[0] - sideX * halfWidth, root[1], root[2] - sideZ * halfWidth],
+      [root[0] + sideX * halfWidth, root[1], root[2] + sideZ * halfWidth],
+      [top[0] + sideX * halfWidth, top[1], top[2] + sideZ * halfWidth],
+      [top[0] - sideX * halfWidth, top[1], top[2] - sideZ * halfWidth],
+      normal,
+      .08,
+      1,
+    );
+  }
+  return finishGeometry(buffers);
+}
+
+function makeLeafLitterPatchGeometry() {
+  const buffers = makeBuffers();
+  for (let leaf = 0; leaf < 5; leaf += 1) {
+    const centerAngle = leaf * 2.399963 + .37;
+    const radius = .08 + .055 * leaf;
+    const center = [Math.cos(centerAngle) * radius, .006 + leaf * .001, Math.sin(centerAngle) * radius];
+    const angle = leaf * 1.73 + .24;
+    const dirX = Math.cos(angle);
+    const dirZ = Math.sin(angle);
+    const sideX = -dirZ;
+    const sideZ = dirX;
+    const length = .12 + .045 * (.5 + .5 * Math.sin(leaf * 2.63));
+    const width = .036 + .018 * (.5 + .5 * Math.sin(leaf * 4.11));
+    const back = [center[0] - dirX * length * .42, center[1], center[2] - dirZ * length * .42];
+    const front = [center[0] + dirX * length * .58, center[1] + .004, center[2] + dirZ * length * .58];
+    const left = [center[0] + sideX * width, center[1] + .008, center[2] + sideZ * width];
+    const right = [center[0] - sideX * width, center[1], center[2] - sideZ * width];
+    appendTriangle(buffers, back, right, front, 0);
+    appendTriangle(buffers, back, front, left, 0);
+  }
+
+  const twigAngle = 1.08;
+  const twigDir = [Math.cos(twigAngle), Math.sin(twigAngle)];
+  const twigSide = [-twigDir[1], twigDir[0]];
+  appendQuad(
+    buffers,
+    [-twigDir[0] * .22 - twigSide[0] * .009, .011, -twigDir[1] * .22 - twigSide[1] * .009],
+    [-twigDir[0] * .22 + twigSide[0] * .009, .011, -twigDir[1] * .22 + twigSide[1] * .009],
+    [twigDir[0] * .22 + twigSide[0] * .005, .014, twigDir[1] * .22 + twigSide[1] * .005],
+    [twigDir[0] * .22 - twigSide[0] * .005, .014, twigDir[1] * .22 - twigSide[1] * .005],
+    [0, 1, 0],
+    0,
+    0,
+  );
   return finishGeometry(buffers);
 }
 
@@ -869,6 +1073,7 @@ const FOLIAGE_FRAGMENT_SHADER = /* glsl */`
   uniform float uFadeEnd;
   uniform float uTransmissionStrength;
   uniform float uContactStrength;
+  uniform float uAmbientStrength;
 
   varying float vFlex;
   varying float vTint;
@@ -911,7 +1116,7 @@ const FOLIAGE_FRAGMENT_SHADER = /* glsl */`
     float rootContact = 1.0 - smoothstep(0.025, 0.58, vFlex);
     float contactShade = 1.0 - uContactStrength * rootContact
       * mix(1.0, 0.72, wrappedLight);
-    color *= (0.43 + wrappedLight * 0.49 + frontLight * 0.16) * contactShade;
+    color *= (uAmbientStrength + wrappedLight * 0.49 + frontLight * 0.16) * contactShade;
 
     float transmission = (backLight * 0.3 + rim * 0.045)
       * uTransmissionStrength * (0.22 + 0.78 * smoothstep(0.08, 0.9, vFlex));
@@ -939,6 +1144,8 @@ const BAMBOO_FRAGMENT_SHADER = /* glsl */`
   uniform float uFadeStart;
   uniform float uFadeEnd;
   uniform float uTransmissionStrength;
+  uniform float uTextureStrength;
+  uniform float uSurfaceBrightness;
 
   varying float vFlex;
   varying float vTint;
@@ -977,8 +1184,8 @@ const BAMBOO_FRAGMENT_SHADER = /* glsl */`
       1.0
     );
     vec3 paletteColor = mix(uBaseColor, uLitColor, pigmentMix);
-    vec3 color = mix(paletteColor, leaf.rgb, 0.74);
-    color *= 0.49 + wrappedLight * 0.48 + frontLight * 0.12;
+    vec3 color = mix(paletteColor, leaf.rgb, uTextureStrength);
+    color *= (0.49 + wrappedLight * 0.48 + frontLight * 0.12) * uSurfaceBrightness;
     color = mix(color, uTipColor, smoothstep(0.76, 1.0, vFlex) * 0.075);
     color += uSunColor * (backLight * 0.27 + rim * 0.055) * uTransmissionStrength;
 
@@ -1139,6 +1346,7 @@ function foliageMaterial(common, colors, options = {}) {
       uFadeEnd: { value: options.fadeEnd ?? 116 },
       uTransmissionStrength: { value: options.transmissionStrength ?? 0.3 },
       uContactStrength: { value: options.contactStrength ?? 0.38 },
+      uAmbientStrength: { value: options.ambientStrength ?? 0.43 },
     },
     vertexShader: INSTANCED_VERTEX_SHADER,
     fragmentShader: FOLIAGE_FRAGMENT_SHADER,
@@ -1149,9 +1357,9 @@ function foliageMaterial(common, colors, options = {}) {
   });
 }
 
-function makeBambooCrownMaterial(common, colors, leafMap, options = {}) {
+function makeCutoutFoliageMaterial(common, colors, leafMap, options = {}) {
   return new ShaderMaterial({
-    name: options.name ?? 'Bamboo leaf sprays',
+    name: options.name ?? 'Cutout foliage',
     uniforms: {
       ...common,
       uLeafMap: { value: leafMap },
@@ -1165,6 +1373,8 @@ function makeBambooCrownMaterial(common, colors, leafMap, options = {}) {
       uFadeStart: { value: options.fadeStart ?? 150 },
       uFadeEnd: { value: options.fadeEnd ?? 188 },
       uTransmissionStrength: { value: options.transmissionStrength ?? 0.62 },
+      uTextureStrength: { value: options.textureStrength ?? .74 },
+      uSurfaceBrightness: { value: options.surfaceBrightness ?? 1 },
     },
     vertexShader: INSTANCED_VERTEX_SHADER,
     fragmentShader: BAMBOO_FRAGMENT_SHADER,
@@ -1328,8 +1538,9 @@ function addLayer(root, name, baseGeometry, data, material, boundingRadius = 180
 
 /**
  * Builds the biome's animated vegetation as a small number of instanced draw calls.
- * Placement and motion are deterministic. The bamboo crown uses one original
- * alpha-cutout frond so its dense silhouette survives at walking distance.
+ * Placement and motion are deterministic. Original alpha-cutout bamboo and
+ * fern fronds preserve complex silhouettes while the dominant floor remains
+ * opaque procedural geometry.
  */
 export function createVegetation(scene, {
   heightAt,
@@ -1351,6 +1562,9 @@ export function createVegetation(scene, {
   const bambooFrondTexture = new TextureLoader().load('/assets/vegetation/bamboo-frond.png');
   bambooFrondTexture.colorSpace = SRGBColorSpace;
   bambooFrondTexture.anisotropy = 4;
+  const fernTexture = new TextureLoader().load('/assets/vegetation/forest-fern.png');
+  fernTexture.colorSpace = SRGBColorSpace;
+  fernTexture.anisotropy = 4;
 
   const safeHeight = (x, z) => {
     const value = heightAt?.(x, z);
@@ -1383,9 +1597,26 @@ export function createVegetation(scene, {
     return clamp(shape * (0.28 + patchNoise * 0.84) * (0.66 + finerPatch * 0.4), 0, 0.96);
   };
 
+  const forestFloorMaskAt = (x, z) => {
+    const entryGrove = smoothstep(49, 91, z);
+    const outerWoodland = smoothstep(48, 96, Math.abs(x));
+    const southernWoodland = 1 - smoothstep(-76, -37, z);
+    const canopyPatch = fbm(x * .041, z * .041, SEED + 6029);
+    const habitat = Math.max(
+      entryGrove * .96,
+      outerWoodland * .72,
+      southernWoodland * .54,
+    );
+    return clamp(habitat * (.58 + canopyPatch * .64), 0, 1);
+  };
+
   const grassTarget = Math.round(22500 * density);
   const reedTarget = Math.round(1900 * density);
   const flowerTarget = Math.round(11200 * density);
+  const forestSedgeTarget = Math.round(6000 * density);
+  const meadowUnderstoryTarget = Math.round(10500 * density);
+  const fernTarget = Math.round(1100 * density);
+  const litterTarget = Math.round(4200 * density);
   const bambooTarget = Math.round(520 * Math.sqrt(density));
   const treeTarget = Math.round(54 * Math.sqrt(density));
   const particleTarget = Math.round(820 * Math.sqrt(density));
@@ -1397,14 +1628,14 @@ export function createVegetation(scene, {
     if (rng() > edgeFade) return null;
     const pathD = pathDistance(x, z);
     const riverD = riverDistance(x, z);
-    if (pathD < 1.58 || riverD < 2.75) return null;
+    if (pathD < 1.2 || riverD < 2.75) return null;
 
     const macro = fbm(x * 0.035, z * 0.035, SEED + 77);
     const flowerMass = flowerMassAt(x, z);
-    const ridgeReduction = 1 - smoothstep(52, 83, z) * 0.74;
-    const pathSoftEdge = smoothstep(1.58, 4.65, pathD);
+    const ridgeReduction = 1 - smoothstep(52, 83, z) * 0.48;
+    const pathSoftEdge = smoothstep(1.2, 3.05, pathD);
     const riverSoftEdge = smoothstep(2.75, 7.5, riverD);
-    const crimsonOpening = 1 - smoothstep(0.08, 0.9, flowerMass) * 0.78;
+    const crimsonOpening = 1 - smoothstep(0.08, 0.9, flowerMass) * 0.42;
     const acceptance = (0.56 + macro * 0.5)
       * ridgeReduction
       * pathSoftEdge
@@ -1419,10 +1650,10 @@ export function createVegetation(scene, {
       x,
       y: safeHeight(x, z) + 0.012,
       z,
-      scaleX: 0.82 + rng() * 0.62,
-      scaleY: (0.54 + rng() * 0.61) * heightBias * flowerShortening * amberHeight,
+      scaleX: .9 + rng() * .66,
+      scaleY: (.58 + rng() * .64) * heightBias * flowerShortening * amberHeight,
       yaw: rng() * TAU,
-      tint: clamp(macro * 0.82 + rng() * 0.22, 0, 1),
+      tint: clamp(macro * 0.74 + rng() * 0.26 - smoothstep(55, 95, z) * .12, 0, 1),
       phase: rng(),
     };
   }, 18);
@@ -1538,11 +1769,126 @@ export function createVegetation(scene, {
     };
   }, 55);
 
+  const sedgeRandom = mulberry32(SEED + 0x61d9);
+  const forestSedgeData = buildInstanceData(forestSedgeTarget, sedgeRandom, (rng) => {
+    const entryBiased = rng() < .62;
+    const x = (rng() * 2 - 1) * 106;
+    const z = entryBiased ? 53 + rng() * 54 : (rng() * 2 - 1) * 106;
+    const pathD = pathDistance(x, z);
+    const riverD = riverDistance(x, z);
+    if (pathD < 1.32 || riverD < 2.9) return null;
+    const habitat = forestFloorMaskAt(x, z);
+    const laneNoise = fbm(x * .066, z * .066, SEED + 6503);
+    const flowerGuard = 1 - smoothstep(.14, .86, flowerMassAt(x, z)) * .68;
+    const pathRecovery = smoothstep(1.32, 3.1, pathD);
+    const riverRecovery = smoothstep(2.9, 6.8, riverD);
+    const patch = smoothstep(.23, .78, laneNoise) * .66 + .34;
+    if (rng() > habitat * flowerGuard * pathRecovery * riverRecovery * patch) return null;
+    return {
+      x,
+      y: safeHeight(x, z) + .014,
+      z,
+      scaleX: 1.02 + rng() * .68,
+      scaleY: .72 + rng() * .5,
+      yaw: groundFlowYawAt(x, z) + (rng() - .5) * .6,
+      tint: clamp(.14 + habitat * .28 + laneNoise * .4 + (rng() - .5) * .12, 0, 1),
+      phase: rng(),
+    };
+  }, 64);
+
+  // A short, continuous weave fills the central basin beneath the lilies. It
+  // uses the inexpensive two-segment flowing archetype, so the meadow gains the
+  // reference's overlapping ground-level arcs without turning into another
+  // tall sedge field or obscuring the flower heads.
+  const meadowUnderstoryRandom = mulberry32(SEED + 0xb45f);
+  const meadowUnderstoryData = buildInstanceData(
+    meadowUnderstoryTarget,
+    meadowUnderstoryRandom,
+    (rng) => {
+      const x = (rng() * 2 - 1) * 84;
+      const z = -58 + rng() * 116;
+      const pathD = pathDistance(x, z);
+      const riverD = riverDistance(x, z);
+      if (pathD < 1.6 || riverD < 3.2) return null;
+
+      const basinX = 1 - smoothstep(70, 84, Math.abs(x));
+      const basinZ = smoothstep(-62, -50, z) * (1 - smoothstep(48, 60, z));
+      const pathRecovery = smoothstep(1.6, 3.5, pathD);
+      const riverRecovery = smoothstep(3.2, 7, riverD);
+      const heroTreeClear = smoothstep(4.8, 8, Math.hypot(x + 27, z + 32));
+      const continuity = .78 + fbm(x * .035, z * .035, SEED + 0xb45f) * .22;
+      const flowers = flowerMassAt(x, z);
+      const flowerPreserve = 1 - smoothstep(.2, .85, flowers) * .12;
+      const acceptance = basinX * basinZ * pathRecovery * riverRecovery
+        * heroTreeClear * continuity * flowerPreserve;
+      if (rng() > acceptance) return null;
+
+      return {
+        x,
+        y: safeHeight(x, z) + .009,
+        z,
+        scaleX: 1.25 + rng() * .75,
+        scaleY: (.72 + rng() * .34) * (1 - flowers * .14),
+        yaw: groundFlowYawAt(x, z) + (rng() - .5) * .85,
+        tint: clamp(.12 + continuity * .42 + (rng() - .5) * .12, 0, 1),
+        phase: rng(),
+      };
+    },
+    64,
+  );
+
+  const fernRandom = mulberry32(SEED + 0x7f31);
+  const fernData = buildInstanceData(fernTarget, fernRandom, (rng) => {
+    const x = (rng() * 2 - 1) * 105;
+    const z = (rng() * 2 - 1) * 105;
+    const pathD = pathDistance(x, z);
+    const riverD = riverDistance(x, z);
+    if (pathD < 1.5 || riverD < 3.1) return null;
+    const habitat = forestFloorMaskAt(x, z);
+    const colonyNoise = fbm(x * .075 + 9, z * .075 - 4, SEED + 7207);
+    const colony = smoothstep(.38, .76, colonyNoise);
+    const flowerGuard = 1 - smoothstep(.08, .72, flowerMassAt(x, z)) * .82;
+    if (rng() > habitat * flowerGuard * (.18 + colony * .94)) return null;
+    return {
+      x,
+      y: safeHeight(x, z) + .018,
+      z,
+      scaleX: .72 + rng() * .52,
+      scaleY: .68 + rng() * .42,
+      yaw: rng() * TAU,
+      tint: clamp(.16 + colonyNoise * .62 + (rng() - .5) * .12, 0, 1),
+      phase: rng(),
+    };
+  }, 72);
+
+  const litterRandom = mulberry32(SEED + 0x92ab);
+  const litterData = buildInstanceData(litterTarget, litterRandom, (rng) => {
+    const x = (rng() * 2 - 1) * 107;
+    const z = (rng() * 2 - 1) * 107;
+    const pathD = pathDistance(x, z);
+    const riverD = riverDistance(x, z);
+    if (pathD < .74 || riverD < 2.45) return null;
+    const habitat = forestFloorMaskAt(x, z);
+    const litterPatch = fbm(x * .092 - 5, z * .092 + 11, SEED + 7411);
+    const flowerGuard = 1 - smoothstep(.2, .92, flowerMassAt(x, z)) * .42;
+    if (rng() > habitat * flowerGuard * (.42 + litterPatch * .62)) return null;
+    return {
+      x,
+      y: safeHeight(x, z) + .022,
+      z,
+      scaleX: .72 + rng() * .76,
+      scaleY: 1,
+      yaw: rng() * TAU,
+      tint: clamp(.1 + litterPatch * .72 + (rng() - .5) * .18, 0, 1),
+      phase: rng(),
+    };
+  }, 52);
+
   const grassBase = makeGrassTuftGeometry({
     blades: 6,
     segments: 3,
-    width: 0.027,
-    spread: 0.15,
+    width: .027,
+    spread: .15,
   });
   const reedBase = makeGrassTuftGeometry({
     blades: 5,
@@ -1550,6 +1896,16 @@ export function createVegetation(scene, {
     width: 0.021,
     spread: 0.095,
   });
+  const sedgeArchetypeCount = density < .5 ? 1 : 2;
+  const sedgeArchetypeData = Array.from({ length: sedgeArchetypeCount }, (_, archetype) => (
+    selectInstanceData(forestSedgeData, archetype, sedgeArchetypeCount)
+  ));
+  const sedgeBases = Array.from({ length: sedgeArchetypeCount }, (_, archetype) => (
+    makeFlowingGrassGeometry(archetype + 1)
+  ));
+  const meadowUnderstoryBase = makeFlowingGrassGeometry(0);
+  const fernBase = makeFernClumpGeometry();
+  const litterBase = makeLeafLitterPatchGeometry();
   const flowerBase = makeFlowerClumpGeometry();
   const bambooArchetypeData = [0, 1, 2].map((archetype) => (
     selectInstanceData(bambooData, archetype, 3)
@@ -1563,20 +1919,130 @@ export function createVegetation(scene, {
   const treeCanopyBases = [0, 1, 2].map((archetype) => makeBroadleafCanopyGeometry(archetype));
 
   addLayer(root, 'Tawny grass', grassBase, grassData, foliageMaterial(common, {
-    base: paletteColor(palette, 'grassShadow', 0x67502d).multiplyScalar(0.54),
-    lit: paletteColor(palette, 'grassLit', 0xb88443).multiplyScalar(0.74),
+    base: paletteColor(palette, 'grassShadow', 0x67502d)
+      .lerp(paletteColor(palette, 'grassLit', 0xb88443), .18),
+    lit: paletteColor(palette, 'grassLit', 0xb88443)
+      .lerp(paletteColor(palette, 'grassTip', 0xe0b86a), .16),
     tip: paletteColor(palette, 'grassTip', 0xe0b86a)
-      .lerp(paletteColor(palette, 'sun', 0xffd17a), 0.14),
+      .lerp(paletteColor(palette, 'sun', 0xffd17a), 0.26),
   }, {
     name: 'Tawny grass material',
     bendScale: 0.3,
     playerBend: 0.72,
+    shapeVariation: .08,
     hardDistance: 126,
     fadeStart: 70,
     fadeEnd: 118,
-    transmissionStrength: 0.34,
-    contactStrength: 0.6,
+    transmissionStrength: 0.58,
+    contactStrength: 0.46,
+    ambientStrength: .56,
   }));
+
+  const forestSedgeMaterials = [foliageMaterial(common, {
+    base: paletteColor(palette, 'grassShadow', 0x67502d)
+      .lerp(paletteColor(palette, 'grassLit', 0xb88443), .14),
+    lit: paletteColor(palette, 'grassShadow', 0x67502d)
+      .lerp(paletteColor(palette, 'grassTip', 0xe0b86a), .58),
+    tip: paletteColor(palette, 'grassTip', 0xe0b86a)
+      .lerp(paletteColor(palette, 'sun', 0xffd17a), .34),
+  }, {
+    name: 'Wind-combed forest sedge material',
+    bendScale: .2,
+    playerBend: .62,
+    shapeVariation: .065,
+    hardDistance: 82,
+    fadeStart: 50,
+    fadeEnd: 76,
+    transmissionStrength: .78,
+    contactStrength: .47,
+    ambientStrength: .61,
+  }), foliageMaterial(common, {
+    base: paletteColor(palette, 'shadowTeal', 0x0b1b1d)
+      .lerp(paletteColor(palette, 'grassShadow', 0x67502d), .56),
+    lit: paletteColor(palette, 'grassShadow', 0x67502d)
+      .lerp(paletteColor(palette, 'grassLit', 0xb88443), .34),
+    tip: paletteColor(palette, 'grassLit', 0xb88443)
+      .lerp(paletteColor(palette, 'grassTip', 0xe0b86a), .42),
+  }, {
+    name: 'Shadowed matted sedge material',
+    bendScale: .17,
+    playerBend: .62,
+    shapeVariation: .08,
+    hardDistance: 78,
+    fadeStart: 46,
+    fadeEnd: 72,
+    transmissionStrength: .5,
+    contactStrength: .53,
+    ambientStrength: .51,
+  })];
+
+  let forestFloorDrawCalls = 0;
+  sedgeArchetypeData.forEach((data, archetype) => {
+    if (data.count === 0) return;
+    addLayer(
+      root,
+      `Wind-combed forest sedge ${archetype + 1}`,
+      sedgeBases[archetype],
+      data,
+      forestSedgeMaterials[archetype],
+      145,
+    );
+    forestFloorDrawCalls += 1;
+  });
+
+  if (meadowUnderstoryData.count > 0) {
+    addLayer(
+      root,
+      'Low matted meadow underlayer',
+      meadowUnderstoryBase,
+      meadowUnderstoryData,
+      forestSedgeMaterials[1],
+      125,
+    );
+    forestFloorDrawCalls += 1;
+  }
+
+  if (fernData.count > 0) {
+    addLayer(root, 'Woodland fern colonies', fernBase, fernData, makeCutoutFoliageMaterial(common, {
+      base: paletteColor(palette, 'shadowTeal', 0x0b1b1d),
+      lit: paletteColor(palette, 'bamboo', 0x163b34)
+        .lerp(paletteColor(palette, 'grassLit', 0xb88443), .28),
+      tip: paletteColor(palette, 'grassTip', 0xe0b86a)
+        .lerp(paletteColor(palette, 'sun', 0xffd17a), .28),
+    }, fernTexture, {
+      name: 'Woodland fern cutout material',
+      bendScale: .1,
+      playerBend: .3,
+      shapeVariation: .055,
+      hardDistance: 62,
+      fadeStart: 36,
+      fadeEnd: 57,
+      transmissionStrength: .48,
+      textureStrength: .38,
+      surfaceBrightness: .55,
+    }), 76);
+    forestFloorDrawCalls += 1;
+  }
+
+  if (litterData.count > 0) {
+    addLayer(root, 'Forest leaf litter', litterBase, litterData, foliageMaterial(common, {
+      base: paletteColor(palette, 'bark', 0x4b3d31).multiplyScalar(.42),
+      lit: paletteColor(palette, 'grassShadow', 0x67502d)
+        .lerp(paletteColor(palette, 'grassLit', 0xb88443), .18),
+      tip: paletteColor(palette, 'grassTip', 0xe0b86a).multiplyScalar(.68),
+    }, {
+      name: 'Forest leaf litter material',
+      bendScale: 0,
+      playerBend: 0,
+      shapeVariation: 0,
+      hardDistance: 70,
+      fadeStart: 42,
+      fadeEnd: 65,
+      transmissionStrength: .04,
+      contactStrength: .48,
+    }), 82);
+    forestFloorDrawCalls += 1;
+  }
 
   addLayer(root, 'River reeds', reedBase, reedData, foliageMaterial(common, {
     base: paletteColor(palette, 'grassShadow', 0x574527).multiplyScalar(0.5),
@@ -1613,7 +2079,7 @@ export function createVegetation(scene, {
     contactStrength: 0.34,
   });
 
-  const bambooCrownMaterial = makeBambooCrownMaterial(common, {
+  const bambooCrownMaterial = makeCutoutFoliageMaterial(common, {
     base: paletteColor(palette, 'shadowTeal', 0x0b1b1d),
     lit: paletteColor(palette, 'bamboo', 0x163b34).lerp(new Color(0x65784e), .18),
     tip: paletteColor(palette, 'bamboo', 0x163b34)
@@ -1710,14 +2176,20 @@ export function createVegetation(scene, {
 
   const stats = Object.freeze({
     grassTufts: grassData.count,
+    forestSedgeTufts: forestSedgeData.count,
+    meadowUnderstoryTufts: meadowUnderstoryData.count,
     reedTufts: reedData.count,
-    totalTufts: grassData.count + reedData.count,
+    totalTufts: grassData.count + forestSedgeData.count
+      + meadowUnderstoryData.count + reedData.count,
+    fernClumps: fernData.count,
+    litterPatches: litterData.count,
     flowerClumps: flowerData.count,
     bambooStalks: bambooData.count,
     broadleafTrees: treeData.count,
     windborneParticles: particleTarget,
     bambooArchetypes: bambooArchetypeData.length,
-    drawCalls: 4 + bambooDrawCalls + treeDrawCalls,
+    forestFloorDrawCalls,
+    drawCalls: 4 + forestFloorDrawCalls + bambooDrawCalls + treeDrawCalls,
   });
 
   return {

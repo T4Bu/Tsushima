@@ -27,6 +27,13 @@ the outer woodland completes the implied loop.
   banners, water, and loose petals respond to the same world-space gust field.
 - Dense habitat patches matter more than species count. Avoid evenly scattered
   procedural confetti.
+- Woodland floors use three readable strata: low litter and loose grass, long
+  wind-combed sedge ribbons following a patchwise resting flow, and sparse fern
+  colonies. Keep the crimson meadow more open so those shaded tangles remain a
+  distinct habitat rather than a world-wide carpet.
+- Beneath the crimson flowers, a shorter two-segment weave carries the same
+  patchwise flow at ground level. It closes broad soil gaps without competing
+  with the flower heads, path silhouettes, river margin, or hero-tree clearing.
 - Preserve walkability: the dirt route, bridge, stream shallows, torii, and tree
   clearing all share the analytic terrain height used by the player controller.
 - Use natural assets as texture and silhouette amplifiers, not as layout. Their
@@ -54,6 +61,12 @@ trampled mud along the route, and darker wet soil feathered beneath and beside
 the stream. Their normal and ORM maps are kept channel-safe and deliberately
 small; broad vertex tint and a dry-ground roughness floor prevent obvious scan
 tiling or glossy terrain.
+
+The forest-floor silhouette is geometric rather than painted into the terrain:
+opaque curved strips form the long sedges, low solid meshes supply leaf litter,
+and one original alpha-cutout fern supplies complex secondary leaflets. Broad
+deterministic flow fields set each patch's resting direction before the shared
+gust field animates it.
 
 Two textured broadleaf variants provide the natural woodland and the foliage
 mass around the hero tree. The runtime flattens and instances their parts,
