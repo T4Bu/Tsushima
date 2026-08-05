@@ -269,49 +269,49 @@ function makeGrassTuftGeometry({
 
 const FLOWING_GRASS_STYLES = [
   {
-    blades: 5,
-    segments: 2,
-    width: .034,
-    spread: .24,
+    blades: 6,
+    segments: 3,
+    width: .027,
+    spread: .2,
     minHeight: .38,
     heightRange: .22,
-    minReach: .4,
-    reachRange: .35,
-    drop: .7,
-    fan: .78,
-    curl: .18,
+    minReach: .1,
+    reachRange: .2,
+    drop: .18,
+    fan: .72,
+    curl: .07,
     crossEvery: 3,
-    crossTurn: .95,
+    crossTurn: .45,
   },
   {
-    blades: 10,
-    segments: 5,
-    width: .032,
-    spread: .27,
+    blades: 9,
+    segments: 4,
+    width: .027,
+    spread: .23,
     minHeight: .7,
     heightRange: .44,
-    minReach: .5,
-    reachRange: .34,
-    drop: .68,
-    fan: .4,
-    curl: .18,
+    minReach: .12,
+    reachRange: .24,
+    drop: .15,
+    fan: .48,
+    curl: .06,
     crossEvery: 5,
-    crossTurn: 1.02,
+    crossTurn: .4,
   },
   {
     blades: 8,
     segments: 4,
-    width: .037,
-    spread: .3,
+    width: .029,
+    spread: .25,
     minHeight: .52,
     heightRange: .36,
-    minReach: .62,
-    reachRange: .36,
-    drop: .82,
-    fan: .62,
-    curl: .23,
+    minReach: .18,
+    reachRange: .28,
+    drop: .24,
+    fan: .68,
+    curl: .09,
     crossEvery: 4,
-    crossTurn: 1.18,
+    crossTurn: .52,
   },
 ];
 
@@ -341,12 +341,15 @@ function makeFlowingGrassGeometry(archetype = 0) {
     const bladeWidth = style.width * (.74 + variation * .38);
 
     const centerAt = (t) => {
-      const arc = t * t * (3 - 2 * t);
+      // Keep the lower blade upright and reserve the authored sweep for its
+      // tip. Wind supplies the larger live bend, so the resting floor does not
+      // collapse into repeated ground-hugging straps.
+      const arc = Math.pow(t, 2.2);
       const sideways = Math.sin(t * Math.PI) * style.curl * curlSign
         * (.65 + variation * .45);
       return [
         rootX + dirX * reach * arc + sideX * sideways,
-        height * (t - drop * Math.pow(t, 2.35)),
+        height * (t - drop * Math.pow(t, 3.1)),
         rootZ + dirZ * reach * arc + sideZ * sideways,
       ];
     };
@@ -556,9 +559,9 @@ function makeFlowerClumpGeometry() {
 }
 
 const BAMBOO_ARCHETYPES = [
-  { nodeCount: 7, leanX: 1.02, leanZ: -.46, curveX: .5, curveZ: .36, phase: .35 },
-  { nodeCount: 8, leanX: -.58, leanZ: .92, curveX: .62, curveZ: .42, phase: 1.7 },
-  { nodeCount: 6, leanX: 1.18, leanZ: .5, curveX: .42, curveZ: .58, phase: 3.15 },
+  { nodeCount: 7, leanX: .32, leanZ: -.14, curveX: .1, curveZ: .07, phase: .35 },
+  { nodeCount: 8, leanX: -.18, leanZ: .29, curveX: .12, curveZ: .08, phase: 1.7 },
+  { nodeCount: 6, leanX: .38, leanZ: .16, curveX: .08, curveZ: .11, phase: 3.15 },
 ];
 
 function bambooAxisAt(archetype, t) {
@@ -1788,18 +1791,17 @@ export function createVegetation(scene, {
       x,
       y: safeHeight(x, z) + .014,
       z,
-      scaleX: 1.02 + rng() * .68,
+      scaleX: .85 + rng() * .5,
       scaleY: .72 + rng() * .5,
-      yaw: groundFlowYawAt(x, z) + (rng() - .5) * .6,
+      yaw: groundFlowYawAt(x, z) + (rng() - .5) * 1.7,
       tint: clamp(.14 + habitat * .28 + laneNoise * .4 + (rng() - .5) * .12, 0, 1),
       phase: rng(),
     };
   }, 64);
 
-  // A short, continuous weave fills the central basin beneath the lilies. It
-  // uses the inexpensive two-segment flowing archetype, so the meadow gains the
-  // reference's overlapping ground-level arcs without turning into another
-  // tall sedge field or obscuring the flower heads.
+  // A short, loose underlayer fills the central basin beneath the lilies. Its
+  // mostly upright blades vary around the local flow instead of forming one
+  // repeated ground-level arc, so flower heads and route silhouettes stay clear.
   const meadowUnderstoryRandom = mulberry32(SEED + 0xb45f);
   const meadowUnderstoryData = buildInstanceData(
     meadowUnderstoryTarget,
@@ -1827,9 +1829,9 @@ export function createVegetation(scene, {
         x,
         y: safeHeight(x, z) + .009,
         z,
-        scaleX: 1.25 + rng() * .75,
+        scaleX: .95 + rng() * .6,
         scaleY: (.72 + rng() * .34) * (1 - flowers * .14),
-        yaw: groundFlowYawAt(x, z) + (rng() - .5) * .85,
+        yaw: groundFlowYawAt(x, z) + (rng() - .5) * 2.2,
         tint: clamp(.12 + continuity * .42 + (rng() - .5) * .12, 0, 1),
         phase: rng(),
       };
@@ -1927,9 +1929,9 @@ export function createVegetation(scene, {
       .lerp(paletteColor(palette, 'sun', 0xffd17a), 0.26),
   }, {
     name: 'Tawny grass material',
-    bendScale: 0.3,
-    playerBend: 0.72,
-    shapeVariation: .08,
+    bendScale: 0.17,
+    playerBend: 0.55,
+    shapeVariation: .06,
     hardDistance: 126,
     fadeStart: 70,
     fadeEnd: 118,
@@ -1947,9 +1949,9 @@ export function createVegetation(scene, {
       .lerp(paletteColor(palette, 'sun', 0xffd17a), .34),
   }, {
     name: 'Wind-combed forest sedge material',
-    bendScale: .2,
-    playerBend: .62,
-    shapeVariation: .065,
+    bendScale: .13,
+    playerBend: .36,
+    shapeVariation: .04,
     hardDistance: 82,
     fadeStart: 50,
     fadeEnd: 76,
@@ -1965,9 +1967,9 @@ export function createVegetation(scene, {
       .lerp(paletteColor(palette, 'grassTip', 0xe0b86a), .42),
   }, {
     name: 'Shadowed matted sedge material',
-    bendScale: .17,
-    playerBend: .62,
-    shapeVariation: .08,
+    bendScale: .11,
+    playerBend: .36,
+    shapeVariation: .05,
     hardDistance: 78,
     fadeStart: 46,
     fadeEnd: 72,
@@ -2050,8 +2052,8 @@ export function createVegetation(scene, {
     tip: paletteColor(palette, 'grassTip', 0xe0b86a).multiplyScalar(0.92),
   }, {
     name: 'River reed material',
-    bendScale: 0.34,
-    playerBend: 0.68,
+    bendScale: 0.24,
+    playerBend: 0.5,
     hardDistance: 132,
     fadeStart: 76,
     fadeEnd: 124,
@@ -2067,9 +2069,9 @@ export function createVegetation(scene, {
     tip: paletteColor(palette, 'bamboo', 0x163b34).lerp(new Color(0x768052), .2),
   }, {
     name: 'Bamboo stalk material',
-    bendScale: 0.017,
+    bendScale: 0.012,
     playerBend: 0.03,
-    shapeVariation: .18,
+    shapeVariation: .08,
     // Let distant culms dissolve before their crowns so the ridge reads as a
     // soft bamboo mass instead of a screen-space comb of one-pixel lines.
     hardDistance: 164,
@@ -2088,7 +2090,7 @@ export function createVegetation(scene, {
     name: 'Bamboo leaf material',
     bendScale: 0.021,
     playerBend: 0.02,
-    shapeVariation: .18,
+    shapeVariation: .08,
     hardDistance: 190,
     fadeStart: 150,
     fadeEnd: 188,

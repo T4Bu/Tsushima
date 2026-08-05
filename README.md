@@ -80,8 +80,8 @@ number of seconds.
 
 - GPU-instanced grass, reeds, crimson flowers, bamboo, tree parts, and distant
   tree sprites
-- Habitat-masked floor strata with patch-aligned curved sedges, a short matted
-  basin underlayer, fern colonies, low leaf litter, and deliberate path-edge recovery
+- Habitat-masked floor strata with mostly upright varied sedges, a loose low
+  basin underlayer, fern colonies, leaf litter, and deliberate path-edge recovery
 - One deterministic world-space gust field shared by vegetation, tree shaders,
   banners, particles, and water
 - Large analytic habitat masks that create deliberate red, gold, and green
