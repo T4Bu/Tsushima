@@ -3,3 +3,4 @@ dist/
 captures/*.png
 captures/*.json
 *.log
+captures/review/

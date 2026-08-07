@@ -50,6 +50,19 @@ places it on individually rotated fern-frond cards inside deterministic colonies
 the habitat masks, clump geometry, tinting, distance treatment, and wind response
 are project code.
 
+## Original generated architectural textures
+
+The five 1024 x 1024 WebP files under `public/assets/architecture/` were generated
+specifically for this project with OpenAI image generation from original prompts:
+mineral stucco, pale limestone, vein-cut limestone, oiled cedar, and permeable
+aggregate. The generated PNG outputs were resized with Lanczos filtering and
+encoded to WebP at quality 88 for runtime use; those source PNGs are retained in
+`docs/assets/architecture-sources/` and are not included in the production build.
+Runtime shader code projects the WebPs in compound-local metres, derives
+restrained micro-relief and roughness variation, and mirrors the repeats to keep
+differently scaled instanced walls, slabs, cladding, woodwork, and paving visually
+continuous. They were not copied from *Ghost of Tsushima* or another game.
+
 ## Originality boundary
 
 The project uses *Ghost of Tsushima* as a high-level visual reference only. No

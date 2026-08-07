@@ -4,6 +4,7 @@ const UP = new THREE.Vector3(0, 1, 0);
 const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
 const wish = new THREE.Vector3();
+const PLAYER_RADIUS = .32;
 
 export function createPlayerController(camera, domElement, options) {
   const {
@@ -98,8 +99,53 @@ export function createPlayerController(camera, domElement, options) {
 
   function resolveColliders(candidate) {
     for (const collider of colliders) {
+      if (collider.enabled === false) continue;
       const c = collider.position ?? collider.center ?? collider;
-      const radius = (collider.radius ?? 1) + .32;
+
+      if (collider.shape === 'box') {
+        const halfX = Math.abs(collider.halfExtents?.x ?? 0);
+        const halfZ = Math.abs(collider.halfExtents?.z ?? 0);
+        const angle = collider.yaw ?? 0;
+        const cosine = Math.cos(angle);
+        const sine = Math.sin(angle);
+        const dx = candidate.x - c.x;
+        const dz = candidate.z - c.z;
+
+        // Work in the box's local space, where finding the closest point on
+        // the rectangle is just a pair of clamps.
+        let localX = dx * cosine - dz * sine;
+        let localZ = dx * sine + dz * cosine;
+        const closestX = THREE.MathUtils.clamp(localX, -halfX, halfX);
+        const closestZ = THREE.MathUtils.clamp(localZ, -halfZ, halfZ);
+        const separationX = localX - closestX;
+        const separationZ = localZ - closestZ;
+        const separation2 = separationX * separationX + separationZ * separationZ;
+
+        if (separation2 > 0 && separation2 < PLAYER_RADIUS * PLAYER_RADIUS) {
+          const separation = Math.sqrt(separation2);
+          localX = closestX + separationX / separation * PLAYER_RADIUS;
+          localZ = closestZ + separationZ / separation * PLAYER_RADIUS;
+        } else if (separation2 === 0) {
+          // The circle center is inside the rectangle (including dead center),
+          // so there is no closest-point normal. Choose the nearest face and
+          // place the circle just beyond it; positive is the stable tie-break.
+          const distanceToXFace = halfX - Math.abs(localX);
+          const distanceToZFace = halfZ - Math.abs(localZ);
+          if (distanceToXFace <= distanceToZFace) {
+            localX = (localX < 0 ? -1 : 1) * (halfX + PLAYER_RADIUS);
+          } else {
+            localZ = (localZ < 0 ? -1 : 1) * (halfZ + PLAYER_RADIUS);
+          }
+        } else {
+          continue;
+        }
+
+        candidate.x = c.x + localX * cosine + localZ * sine;
+        candidate.z = c.z - localX * sine + localZ * cosine;
+        continue;
+      }
+
+      const radius = (collider.radius ?? 1) + PLAYER_RADIUS;
       const dx = candidate.x - c.x;
       const dz = candidate.z - c.z;
       const d2 = dx * dx + dz * dz;
@@ -126,7 +172,9 @@ export function createPlayerController(camera, domElement, options) {
       if (wish.lengthSq() > 0) wish.normalize();
 
       const sprinting = keys.has('ShiftLeft') || keys.has('ShiftRight');
-      const targetSpeed = sprinting ? 10.8 : 5.2;
+      // Human-plausible speeds so the 1:1 plan reads at true size: a brisk
+      // architectural walk, and a jog for crossing the basin.
+      const targetSpeed = sprinting ? 6.4 : 2.2;
       const response = 1 - Math.exp(-delta * (wish.lengthSq() ? 10 : 6));
       velocity.x = THREE.MathUtils.lerp(velocity.x, wish.x * targetSpeed, response);
       velocity.z = THREE.MathUtils.lerp(velocity.z, wish.z * targetSpeed, response);
@@ -135,7 +183,7 @@ export function createPlayerController(camera, domElement, options) {
       resolveColliders(candidate);
       position.x = candidate.x;
       position.z = candidate.z;
-      walking = THREE.MathUtils.lerp(walking, Math.min(1, velocity.length() / 5), 1 - Math.exp(-delta * 7));
+      walking = THREE.MathUtils.lerp(walking, Math.min(1, velocity.length() / 2.2), 1 - Math.exp(-delta * 7));
     } else {
       velocity.multiplyScalar(Math.exp(-delta * 7));
       walking = THREE.MathUtils.lerp(walking, 0, 1 - Math.exp(-delta * 5));

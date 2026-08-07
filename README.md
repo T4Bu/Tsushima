@@ -6,6 +6,20 @@ place rather than a recreation of a shipped location: a bamboo ridge opens into
 a crimson spider-lily floodplain, an amber reed basin, a shallow reflective
 stream, and a wind-shaped sanctuary tree.
 
+The eastern meadow now includes a realized 150 x 130 ft family compound at 1:1
+scale. Its 2,080 SF main house opens to the pool court through one 62 x 12 ft
+lanai, while the fab lab, garage, guest house, covered links, garden, and
+landscaping complete the site. White stucco, black-framed glazing, cedar
+accents, low flat roofs, and warm interiors establish its architectural
+language within the basin.
+
+The private wing and guest house are fully occupied at room scale: layered
+beds and neutral textiles, swing-aware white-oak wardrobes, realized private
+doors, and fitted baths with vanities, mirrors, tubs, showers, and plumbing sit
+over white-oak sleeping/dressing floors and limestone wet zones. Warm-plaster
+interior faces and restrained private lighting separate these rooms from the
+cooler exterior shell without changing its weathered response.
+
 The scene uses a hybrid asset approach. Terrain form, habitat masks, vegetation,
 bamboo, flowers, landmarks, water motion, wind, particles, sky, fog, and ambient
 audio are generated or assembled procedurally at runtime. A compact set of
@@ -37,16 +51,19 @@ reacquire mouse look.
 | Mouse | Look while the pointer is captured |
 | `Shift` | Sprint |
 | `P` | Toggle photo mode and the HUD |
+| `B` | Toggle the compound blueprint overlay |
 | `R` | Return to the bamboo entry |
 | `1` | Entry viewpoint |
 | `2` | Basin reveal viewpoint |
 | `3` | Sanctuary tree viewpoint |
 | `4` | River viewpoint |
 | `5` | Meadow viewpoint |
+| `6` | Compound hero viewpoint |
 | `Esc` | Release the pointer |
 
 The player is grounded against the same deterministic analytic height function
 used to build the terrain, path, stream bed, vegetation, bridge, and landmarks.
+The compound walls and pool also participate in player collision.
 
 ## Build, preview, and capture
 
@@ -62,9 +79,13 @@ npm.cmd run capture
 ```
 
 The capture script starts a local Vite server on port 4173 when needed, renders
-five deterministic 1600 Ã— 900 views at simulation time `18.5`, and writes
-`entry.png`, `reveal.png`, `meadow.png`, `river.png`, `tree.png`, plus browser
-errors and scene statistics in `captures/manifest.json`.
+twenty-five deterministic 1600 x 900 views at simulation time `18.5`, and writes
+`entry.png`, `reveal.png`, `transition.png`, `meadow.png`, `river.png`, `tree.png`, `compound.png`,
+`courtyard.png`, `pooldetail.png`, `outdoorkitchen.png`, `arrival.png`, `guesthouse.png`,
+`guestbed.png`, `greatroom.png`, `primarysuite.png`, `primarybath.png`, `bedroom.png`,
+`garage.png`, `garagebay.png`, `fab.png`, `fabmachine.png`, `fabyard.png`, `lanai.png`,
+`lanaithreshold.png`, and `gate.png`, plus browser errors and scene statistics in
+`captures/manifest.json`.
 
 You can open a deterministic view directly while the dev server is running:
 
@@ -72,9 +93,12 @@ You can open a deterministic view directly while the dev server is running:
 http://127.0.0.1:5173/?shot=reveal&time=18.5&quality=high
 ```
 
-`shot` accepts `entry`, `reveal`, `meadow`, `river`, or `tree`. `quality`
-accepts `high`, `medium`, or `low`; `time` freezes the simulation at the given
-number of seconds.
+`shot` accepts `entry`, `reveal`, `transition`, `meadow`, `river`, `tree`, `compound`,
+`courtyard`, `pooldetail`, `outdoorkitchen`, `arrival`, `guesthouse`, `guestbed`,
+`greatroom`, `primarysuite`, `primarybath`, `bedroom`, `garage`, `garagebay`, `fab`,
+`fabmachine`, `fabyard`, `lanai`, `lanaithreshold`, or `gate`.
+`quality` accepts `high`, `medium`, or `low`; `time` freezes the simulation at
+the given number of seconds.
 
 ## Rendering approach
 
@@ -86,13 +110,26 @@ number of seconds.
   banners, particles, and water
 - Large analytic habitat masks that create deliberate red, gold, and green
   color masses instead of uniform procedural scatter
-- A 250 m heightfield with a walkable winding path and shallow meandering stream
+- A 250 m heightfield with a walkable winding path, a graded and flared
+  landscape-to-gate access spur, and a shallow meandering stream
 - Compact albedo, OpenGL normal, and packed ORM maps for forest, path, and wet
   bank surfaces; the source-resolution scans are not shipped
 - Dark teal/copper water with animated geometry, view-angle reflections, and a
   narrow broken track of sunset glints
 - Procedural torii, lanterns, bridge, rocks, exposed roots, and hero-tree
   structure combined with licensed broadleaf foliage and woodland assets
+- A complete 1:1 compound with white-stucco walls, black glazing, cedar accents,
+  flat roofs, warm interiors, a reflective pool court, and integrated
+  landscaping; generated stucco, limestone, cedar, and aggregate textures use
+  metre-scaled triplanar projection across the instanced architecture, while a
+  fully open sliding gate, seamless aggregate wear, texture-authored courtyard
+  fronds, honed interior floors, woven upholstery, rounded living-room details,
+  fitted garage hardware, fabrication equipment, folded roof/opening flashings,
+  drain-aligned weathering, reflective depth-absorbing pool water, an outdoor
+  kitchen, refined loungers, secondary-building jamb returns, service canopies,
+  louvers, meters, conduit, mechanical equipment, exterior-only shell weathering,
+  and the underlying blueprint preserve arrival, occupation, construction, and
+  planning detail
 - Low sunset key, cool shadow fill, layered silhouettes, exponential amber fog,
   bloom, vignette, film grain, ACES filmic tone mapping, and capped pixel ratio
 - Filtered-noise wind ambience generated after the first user interaction
