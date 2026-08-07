@@ -590,9 +590,11 @@ export function createLandmarks(scene, {
   // Three uneven banner poles sit inside the tree clearing. Crossbars and cloth
   // turn into the prevailing wind while the supporting poles remain rigid.
   const bannerDefinitions = [
-    { x: treeX - 5.8, z: treeZ + 2.8, poleHeight: 8.8, width: 2.25, clothHeight: 4.35, color: crimson, seed: .7 },
-    { x: treeX - 2.6, z: treeZ + 4.5, poleHeight: 7.5, width: 1.85, clothHeight: 3.75, color: grassLit.clone().lerp(sun, .22), seed: 2.1 },
-    { x: treeX + 4.6, z: treeZ - 2.9, poleHeight: 7.9, width: 2.0, clothHeight: 4.0, color: crimsonDark.clone().lerp(bark, .18), seed: 4.4 },
+    // Nobori-scale banners (≈5 m poles, narrow cloth) so they read as human
+    // battle standards rather than towering over the single-storey compound.
+    { x: treeX - 5.8, z: treeZ + 2.8, poleHeight: 5.4, width: 1.0, clothHeight: 3.2, color: crimson, seed: .7 },
+    { x: treeX - 2.6, z: treeZ + 4.5, poleHeight: 4.6, width: .82, clothHeight: 2.7, color: grassLit.clone().lerp(sun, .22), seed: 2.1 },
+    { x: treeX + 4.6, z: treeZ - 2.9, poleHeight: 5.0, width: .9, clothHeight: 2.9, color: crimsonDark.clone().lerp(bark, .18), seed: 4.4 },
   ];
   const poleGeometry = new THREE.CylinderGeometry(.075, .115, 1, 7);
   const poles = new THREE.InstancedMesh(poleGeometry, darkWoodMaterial, bannerDefinitions.length);

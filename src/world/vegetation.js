@@ -16,6 +16,13 @@ import {
   Vector2,
   Vector3,
 } from 'three';
+import {
+  isInsideCompoundHardscape,
+  isInsideCompoundInterior,
+  isInsideCompoundTreeClearance,
+} from './site-layout.js';
+import { gateAccessRouteClearance } from './terrain.js';
+import { WIND_FIELD_GLSL } from './biome-shared.js';
 
 const TAU = Math.PI * 2;
 const WORLD_EDGE = 110;
@@ -219,7 +226,9 @@ function finishGeometry(buffers) {
 function makeGrassTuftGeometry({
   blades = 6,
   segments = 3,
-  width = 0.028,
+  // Quads span ±width, so keep this at half the intended blade width; 0.018
+  // reads as believable meadow grass beside the 1:1 compound plan.
+  width = 0.018,
   spread = 0.15,
 } = {}) {
   const buffers = makeBuffers();
@@ -235,7 +244,7 @@ function makeGrassTuftGeometry({
     normal[0] /= normalLength;
     normal[1] /= normalLength;
     normal[2] /= normalLength;
-    const height = 0.54 + 0.46 * (0.5 + 0.5 * Math.sin(blade * 4.73 + 0.7));
+    const height = 0.36 + 0.28 * (0.5 + 0.5 * Math.sin(blade * 4.73 + 0.7));
     const bladeWidth = width * (0.68 + 0.32 * (0.5 + 0.5 * Math.sin(blade * 3.11)));
     const rootRadius = spread * Math.sqrt((blade + 0.35) / blades);
     const rootAngle = blade * 2.399963;
@@ -271,10 +280,10 @@ const FLOWING_GRASS_STYLES = [
   {
     blades: 6,
     segments: 3,
-    width: .027,
+    width: .018,
     spread: .2,
-    minHeight: .38,
-    heightRange: .22,
+    minHeight: .26,
+    heightRange: .15,
     minReach: .1,
     reachRange: .2,
     drop: .18,
@@ -286,10 +295,10 @@ const FLOWING_GRASS_STYLES = [
   {
     blades: 9,
     segments: 4,
-    width: .027,
+    width: .018,
     spread: .23,
-    minHeight: .7,
-    heightRange: .44,
+    minHeight: .46,
+    heightRange: .28,
     minReach: .12,
     reachRange: .24,
     drop: .15,
@@ -301,10 +310,10 @@ const FLOWING_GRASS_STYLES = [
   {
     blades: 8,
     segments: 4,
-    width: .029,
+    width: .019,
     spread: .25,
-    minHeight: .52,
-    heightRange: .36,
+    minHeight: .35,
+    heightRange: .23,
     minReach: .18,
     reachRange: .28,
     drop: .24,
@@ -465,13 +474,16 @@ function makeLeafLitterPatchGeometry() {
 function makeFlowerClumpGeometry() {
   const buffers = makeBuffers(true);
   const heads = [
-    { x: -0.11, z: 0.015, y: 0.73, rotation: 0.22, size: 1, petals: 7, segments: 2, stamens: 5 },
-    { x: 0.115, z: -0.06, y: 0.61, rotation: 0.73, size: 0.84, petals: 7, segments: 2, stamens: 5 },
+    // Head sizes hold real higanbana proportions (petal reach ≈ 11 cm, stamens
+    // ≈ 15 cm) so blooms stay believable beside the 1:1 compound plan; crimson
+    // mass comes from instance density rather than oversized starbursts.
+    { x: -0.11, z: 0.015, y: 0.73, rotation: 0.22, size: 0.46, petals: 7, segments: 2, stamens: 5 },
+    { x: 0.115, z: -0.06, y: 0.61, rotation: 0.73, size: 0.39, petals: 7, segments: 2, stamens: 5 },
     // A low, simpler bloom closes gaps between instances without turning the
     // foreground into uniformly large starbursts.
-    { x: 0.015, z: 0.14, y: 0.48, rotation: 1.41, size: 0.58, petals: 5, segments: 1, stamens: 3 },
-    { x: -0.255, z: -0.14, y: 0.54, rotation: 2.08, size: 0.55, petals: 5, segments: 1, stamens: 2 },
-    { x: 0.245, z: 0.17, y: 0.46, rotation: 2.77, size: 0.5, petals: 5, segments: 1, stamens: 2 },
+    { x: 0.015, z: 0.14, y: 0.48, rotation: 1.41, size: 0.27, petals: 5, segments: 1, stamens: 3 },
+    { x: -0.255, z: -0.14, y: 0.54, rotation: 2.08, size: 0.25, petals: 5, segments: 1, stamens: 2 },
+    { x: 0.245, z: 0.17, y: 0.46, rotation: 2.77, size: 0.23, petals: 5, segments: 1, stamens: 2 },
   ];
 
   for (const head of heads) {
@@ -937,6 +949,41 @@ function selectInstanceData(data, bucket, bucketCount) {
   return { count, offsets, scales, yaws, tints, phases };
 }
 
+/**
+ * Removes instances from an already completed deterministic dataset. Filtering
+ * here (rather than rejecting candidates inside buildInstanceData) leaves the
+ * PRNG stream and every surviving instance outside the site byte-for-byte
+ * unchanged.
+ */
+function excludeInstanceData(data, shouldExclude) {
+  const selected = [];
+  for (let index = 0; index < data.count; index += 1) {
+    const offsetIndex = index * 3;
+    if (!shouldExclude(data.offsets[offsetIndex], data.offsets[offsetIndex + 2])) {
+      selected.push(index);
+    }
+  }
+
+  if (selected.length === data.count) return data;
+
+  const count = selected.length;
+  const offsets = new Float32Array(count * 3);
+  const scales = new Float32Array(count * 2);
+  const yaws = new Float32Array(count);
+  const tints = new Float32Array(count);
+  const phases = new Float32Array(count);
+
+  selected.forEach((sourceIndex, targetIndex) => {
+    offsets.set(data.offsets.subarray(sourceIndex * 3, sourceIndex * 3 + 3), targetIndex * 3);
+    scales.set(data.scales.subarray(sourceIndex * 2, sourceIndex * 2 + 2), targetIndex * 2);
+    yaws[targetIndex] = data.yaws[sourceIndex];
+    tints[targetIndex] = data.tints[sourceIndex];
+    phases[targetIndex] = data.phases[sourceIndex];
+  });
+
+  return { count, offsets, scales, yaws, tints, phases };
+}
+
 function scaleInstanceWidth(data, widthScale) {
   const scales = new Float32Array(data.scales);
   for (let index = 0; index < data.count; index += 1) {
@@ -960,32 +1007,8 @@ function makeInstancedGeometry(baseGeometry, data, boundingRadius = 180) {
   return geometry;
 }
 
-// This field is deliberately shared verbatim by grass, flowers, bamboo,
-// trees, and airborne debris. Large gust fronts are anchored in world space;
-// per-instance phase is reserved for small flutter, so a wave reads as one
-// event travelling through the whole biome instead of independent swaying.
-const WIND_FIELD_GLSL = /* glsl */`
-  vec3 sampleBiomeWind(vec2 worldXZ, float phase) {
-    vec2 direction = normalize(uWindDirection + vec2(0.0001));
-    vec2 across = vec2(-direction.y, direction.x);
-    float alongWind = dot(worldXZ, direction);
-    float crossWind = dot(worldXZ, across);
-    float warpedFront = alongWind * 0.105 - uTime * 1.28
-      + sin(crossWind * 0.035 + uTime * 0.19) * 1.35;
-    float front = 0.5 + 0.5 * sin(warpedFront);
-    float envelope = 0.5 + 0.5 * sin(
-      alongWind * 0.043 - uTime * 0.47 + crossWind * 0.018
-    );
-    float gust = smoothstep(0.5, 0.88, front) * (0.42 + 0.58 * envelope);
-    float flutter = sin(
-      uTime * 3.8 + phase * 6.2831853 + alongWind * 0.31
-    ) * 0.055;
-    float eddy = sin(crossWind * 0.11 + uTime * 0.54 + alongWind * 0.019)
-      * (0.05 + 0.09 * gust);
-    vec2 windVector = direction * (0.16 + gust * 0.94 + flutter) + across * eddy;
-    return vec3(windVector, gust);
-  }
-`;
+// The gust field lives in biome-shared.js so the compound's managed planting
+// bends with the same world-space fronts as the wild meadow layers here.
 
 const INSTANCED_VERTEX_SHADER = /* glsl */`
   precision highp float;
@@ -1615,7 +1638,9 @@ export function createVegetation(scene, {
 
   const grassTarget = Math.round(22500 * density);
   const reedTarget = Math.round(1900 * density);
-  const flowerTarget = Math.round(11200 * density);
+  // Higher clump count offsets the true-scale (smaller) flower heads so the
+  // basin keeps its broad crimson islands.
+  const flowerTarget = Math.round(16800 * density);
   const forestSedgeTarget = Math.round(6000 * density);
   const meadowUnderstoryTarget = Math.round(10500 * density);
   const fernTarget = Math.round(1100 * density);
@@ -1624,7 +1649,7 @@ export function createVegetation(scene, {
   const treeTarget = Math.round(54 * Math.sqrt(density));
   const particleTarget = Math.round(820 * Math.sqrt(density));
 
-  const grassData = buildInstanceData(grassTarget, random, (rng) => {
+  let grassData = buildInstanceData(grassTarget, random, (rng) => {
     const x = (rng() * 2 - 1) * WORLD_EDGE;
     const z = (rng() * 2 - 1) * WORLD_EDGE;
     const edgeFade = 1 - smoothstep(98, 110, Math.max(Math.abs(x), Math.abs(z)));
@@ -1661,7 +1686,7 @@ export function createVegetation(scene, {
     };
   }, 18);
 
-  const reedData = buildInstanceData(reedTarget, random, (rng) => {
+  let reedData = buildInstanceData(reedTarget, random, (rng) => {
     const x = (rng() * 2 - 1) * 101;
     const centerZ = riverZ?.(x) ?? -30;
     const side = rng() < 0.5 ? -1 : 1;
@@ -1683,7 +1708,7 @@ export function createVegetation(scene, {
     };
   }, 28);
 
-  const flowerData = buildInstanceData(flowerTarget, random, (rng) => {
+  let flowerData = buildInstanceData(flowerTarget, random, (rng) => {
     const x = (rng() * 2 - 1) * 103;
     const z = -57 + rng() * 117;
     const pathD = pathDistance(x, z);
@@ -1730,7 +1755,7 @@ export function createVegetation(scene, {
     });
   }
 
-  const bambooData = buildInstanceData(bambooTarget, bambooRandom, (rng) => {
+  let bambooData = buildInstanceData(bambooTarget, bambooRandom, (rng) => {
     const cluster = bambooClusters[Math.floor(rng() * bambooClusters.length)];
     const angle = rng() * TAU;
     const radius = Math.pow(rng(), .72) * cluster.radius;
@@ -1751,7 +1776,7 @@ export function createVegetation(scene, {
     };
   }, 42);
 
-  const treeData = buildInstanceData(treeTarget, random, (rng) => {
+  let treeData = buildInstanceData(treeTarget, random, (rng) => {
     const x = (rng() * 2 - 1) * 104;
     const z = -88 + rng() * 139;
     const outerWoodland = smoothstep(43, 92, Math.abs(x));
@@ -1773,7 +1798,7 @@ export function createVegetation(scene, {
   }, 55);
 
   const sedgeRandom = mulberry32(SEED + 0x61d9);
-  const forestSedgeData = buildInstanceData(forestSedgeTarget, sedgeRandom, (rng) => {
+  let forestSedgeData = buildInstanceData(forestSedgeTarget, sedgeRandom, (rng) => {
     const entryBiased = rng() < .62;
     const x = (rng() * 2 - 1) * 106;
     const z = entryBiased ? 53 + rng() * 54 : (rng() * 2 - 1) * 106;
@@ -1803,7 +1828,7 @@ export function createVegetation(scene, {
   // mostly upright blades vary around the local flow instead of forming one
   // repeated ground-level arc, so flower heads and route silhouettes stay clear.
   const meadowUnderstoryRandom = mulberry32(SEED + 0xb45f);
-  const meadowUnderstoryData = buildInstanceData(
+  let meadowUnderstoryData = buildInstanceData(
     meadowUnderstoryTarget,
     meadowUnderstoryRandom,
     (rng) => {
@@ -1840,7 +1865,7 @@ export function createVegetation(scene, {
   );
 
   const fernRandom = mulberry32(SEED + 0x7f31);
-  const fernData = buildInstanceData(fernTarget, fernRandom, (rng) => {
+  let fernData = buildInstanceData(fernTarget, fernRandom, (rng) => {
     const x = (rng() * 2 - 1) * 105;
     const z = (rng() * 2 - 1) * 105;
     const pathD = pathDistance(x, z);
@@ -1864,7 +1889,7 @@ export function createVegetation(scene, {
   }, 72);
 
   const litterRandom = mulberry32(SEED + 0x92ab);
-  const litterData = buildInstanceData(litterTarget, litterRandom, (rng) => {
+  let litterData = buildInstanceData(litterTarget, litterRandom, (rng) => {
     const x = (rng() * 2 - 1) * 107;
     const z = (rng() * 2 - 1) * 107;
     const pathD = pathDistance(x, z);
@@ -1886,16 +1911,99 @@ export function createVegetation(scene, {
     };
   }, 52);
 
+  // Apply the realized site's planting hierarchy only after all seeded
+  // placement work has finished. This leaves every surviving instance outside
+  // the compound byte-for-byte stable. Hardscape removes every ground layer;
+  // managed courts and lawns exclude only taller silhouette plants so low
+  // meadow texture can flow naturally between the buildings. Trees and bamboo
+  // retain a crown-safe lot perimeter around the authored site trees.
+  const beforeSiteClear = {
+    grass: grassData.count,
+    reeds: reedData.count,
+    flowers: flowerData.count,
+    bamboo: bambooData.count,
+    trees: treeData.count,
+    forestSedge: forestSedgeData.count,
+    meadowUnderstory: meadowUnderstoryData.count,
+    ferns: fernData.count,
+    litter: litterData.count,
+  };
+  const excludesHardscape = (x, z) => isInsideCompoundHardscape(x, z, 0.28);
+  const excludesManagedTallCover = (x, z) => (
+    excludesHardscape(x, z) || isInsideCompoundInterior(x, z, 0.48)
+  );
+  grassData = excludeInstanceData(grassData, excludesManagedTallCover);
+  reedData = excludeInstanceData(reedData, excludesManagedTallCover);
+  flowerData = excludeInstanceData(flowerData, excludesManagedTallCover);
+  bambooData = excludeInstanceData(bambooData, isInsideCompoundTreeClearance);
+  treeData = excludeInstanceData(treeData, isInsideCompoundTreeClearance);
+  forestSedgeData = excludeInstanceData(forestSedgeData, excludesManagedTallCover);
+  meadowUnderstoryData = excludeInstanceData(meadowUnderstoryData, excludesHardscape);
+  fernData = excludeInstanceData(fernData, excludesManagedTallCover);
+  litterData = excludeInstanceData(litterData, excludesHardscape);
+  const siteClearedInstances = Object.freeze({
+    grass: beforeSiteClear.grass - grassData.count,
+    reeds: beforeSiteClear.reeds - reedData.count,
+    flowers: beforeSiteClear.flowers - flowerData.count,
+    bamboo: beforeSiteClear.bamboo - bambooData.count,
+    trees: beforeSiteClear.trees - treeData.count,
+    forestSedge: beforeSiteClear.forestSedge - forestSedgeData.count,
+    meadowUnderstory: beforeSiteClear.meadowUnderstory - meadowUnderstoryData.count,
+    ferns: beforeSiteClear.ferns - fernData.count,
+    litter: beforeSiteClear.litter - litterData.count,
+  });
+
+  // The access spur is authored after the deterministic biome arrays so this
+  // second filtering pass cannot reroll the surrounding meadow. Keep its
+  // shoulders intact, but remove every layer from the travelled surface; tall
+  // woody layers receive a larger crown/root setback so they cannot lean into
+  // the lane or obscure the gate flare.
+  const beforeRouteClear = {
+    grass: grassData.count,
+    reeds: reedData.count,
+    flowers: flowerData.count,
+    bamboo: bambooData.count,
+    trees: treeData.count,
+    forestSedge: forestSedgeData.count,
+    meadowUnderstory: meadowUnderstoryData.count,
+    ferns: fernData.count,
+    litter: litterData.count,
+  };
+  const excludesGateRoute = (extra = 0) => (
+    (x, z) => gateAccessRouteClearance(x, z, extra) <= 0
+  );
+  const hardRouteVerge = 0.70;
+  grassData = excludeInstanceData(grassData, excludesGateRoute(hardRouteVerge));
+  reedData = excludeInstanceData(reedData, excludesGateRoute(hardRouteVerge));
+  flowerData = excludeInstanceData(flowerData, excludesGateRoute(hardRouteVerge));
+  bambooData = excludeInstanceData(bambooData, excludesGateRoute(2.20));
+  treeData = excludeInstanceData(treeData, excludesGateRoute(3.40));
+  forestSedgeData = excludeInstanceData(forestSedgeData, excludesGateRoute(hardRouteVerge));
+  meadowUnderstoryData = excludeInstanceData(meadowUnderstoryData, excludesGateRoute(hardRouteVerge));
+  fernData = excludeInstanceData(fernData, excludesGateRoute(hardRouteVerge));
+  litterData = excludeInstanceData(litterData, excludesGateRoute(0.25));
+  const gateRouteClearedInstances = Object.freeze({
+    grass: beforeRouteClear.grass - grassData.count,
+    reeds: beforeRouteClear.reeds - reedData.count,
+    flowers: beforeRouteClear.flowers - flowerData.count,
+    bamboo: beforeRouteClear.bamboo - bambooData.count,
+    trees: beforeRouteClear.trees - treeData.count,
+    forestSedge: beforeRouteClear.forestSedge - forestSedgeData.count,
+    meadowUnderstory: beforeRouteClear.meadowUnderstory - meadowUnderstoryData.count,
+    ferns: beforeRouteClear.ferns - fernData.count,
+    litter: beforeRouteClear.litter - litterData.count,
+  });
+
   const grassBase = makeGrassTuftGeometry({
     blades: 6,
     segments: 3,
-    width: .027,
+    width: .018,
     spread: .15,
   });
   const reedBase = makeGrassTuftGeometry({
     blades: 5,
     segments: 4,
-    width: 0.021,
+    width: 0.016,
     spread: 0.095,
   });
   const sedgeArchetypeCount = density < .5 ? 1 : 2;
@@ -2192,6 +2300,8 @@ export function createVegetation(scene, {
     bambooArchetypes: bambooArchetypeData.length,
     forestFloorDrawCalls,
     drawCalls: 4 + forestFloorDrawCalls + bambooDrawCalls + treeDrawCalls,
+    siteClearedInstances,
+    gateRouteClearedInstances,
   });
 
   return {

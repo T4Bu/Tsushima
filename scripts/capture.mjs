@@ -35,23 +35,41 @@ async function waitForServer(url, timeoutMs = 20_000) {
 }
 
 await mkdir(outputDir, { recursive: true });
-let server = null;
-if (!(await responds(baseUrl))) {
-  server = spawn(
-    process.execPath,
-    [path.join(root, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '4173'],
-    { cwd: root, stdio: 'ignore', windowsHide: true },
-  );
-  await waitForServer(baseUrl);
+const availableShots = [
+  'entry',
+  'reveal',
+  'transition',
+  'meadow',
+  'river',
+  'tree',
+  'compound',
+  'courtyard',
+  'pooldetail',
+  'outdoorkitchen',
+  'arrival',
+  'guesthouse',
+  'guestbed',
+  'greatroom',
+  'primarysuite',
+  'primarybath',
+  'bedroom',
+  'garage',
+  'garagebay',
+  'fab',
+  'fabmachine',
+  'fabyard',
+  'lanai',
+  'lanaithreshold',
+  'gate',
+];
+const shots = (process.env.BIOME_SHOTS ?? availableShots.join(','))
+  .split(',')
+  .map((shot) => shot.trim())
+  .filter(Boolean);
+const invalidShots = shots.filter((shot) => !availableShots.includes(shot));
+if (invalidShots.length) {
+  throw new Error(`Unknown capture shot(s): ${invalidShots.join(', ')}`);
 }
-
-const { chromium } = await loadPlaywright();
-const browser = await chromium.launch({
-  headless: true,
-  args: ['--use-angle=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist'],
-});
-
-const shots = ['entry', 'reveal', 'meadow', 'river', 'tree'];
 const manifest = {
   generatedAt: new Date().toISOString(),
   viewport: { width: 1600, height: 900 },
@@ -59,7 +77,24 @@ const manifest = {
   shots: [],
 };
 
+let server = null;
+let browser = null;
 try {
+  if (!(await responds(baseUrl))) {
+    server = spawn(
+      process.execPath,
+      [path.join(root, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', '4173'],
+      { cwd: root, stdio: 'ignore', windowsHide: true },
+    );
+    await waitForServer(baseUrl);
+  }
+
+  const { chromium } = await loadPlaywright();
+  browser = await chromium.launch({
+    headless: true,
+    args: ['--use-angle=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist'],
+  });
+
   for (const shot of shots) {
     const page = await browser.newPage({ viewport: manifest.viewport });
     const errors = [];
@@ -71,16 +106,34 @@ try {
       waitUntil: 'networkidle',
       timeout: 60_000,
     });
-    await page.waitForFunction(() => window.__BIOME_READY__ === true, null, { timeout: 60_000 });
-    await page.waitForTimeout(750);
+    try {
+      await page.waitForFunction(() => window.__BIOME_READY__ === true, null, { timeout: 60_000 });
+    } catch (error) {
+      const readyState = await page.evaluate(() => ({
+        ready: window.__BIOME_READY__,
+        stats: window.__BIOME_STATS__,
+      })).catch(() => null);
+      throw new Error(
+        `Shot ${shot} did not reach the ready gate. Browser errors: ${errors.join(' | ') || 'none'}. State: ${JSON.stringify(readyState)}`,
+        { cause: error },
+      );
+    }
+    // The welcome overlay has a 1.1 s opacity/visibility transition. Wait past
+    // it so deterministic captures never contain a nearly faded UI ghost.
+    await page.waitForTimeout(1_250);
     const output = path.join(outputDir, `${shot}.png`);
-    await page.screenshot({ path: output, type: 'png' });
+    // SwiftShader occasionally needs more than Playwright's 30 s default to
+    // read back a fully populated high-quality frame on the first new camera.
+    // The scene-ready gate above has already verified runtime completion, so a
+    // longer screenshot timeout prevents false negatives without hiding page
+    // or shader errors.
+    await page.screenshot({ path: output, type: 'png', timeout: 60_000 });
     const stats = await page.evaluate(() => window.__BIOME_STATS__);
     manifest.shots.push({ shot, file: path.basename(output), errors, stats });
     await page.close();
   }
 } finally {
-  await browser.close();
+  await browser?.close();
   if (server) server.kill();
 }
 
